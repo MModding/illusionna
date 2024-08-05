@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+either = "1.13.0"
 http = "1.1.0"
 iced = "0.12.1"
-octocrab = "0.38.0"
+octocrab = "0.39.0"
+secrecy = "0.8.0"
 serde_json = "1.0.121"
 tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+webbrowser = "1.0.1"

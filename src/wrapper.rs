@@ -1,15 +1,43 @@
+use std::time::Duration;
+use either::Either;
 use http::header::ACCEPT;
 use http::HeaderName;
-use octocrab::Error;
+use octocrab::{Error, OctocrabBuilder};
+use octocrab::auth::Continue;
 use octocrab::models::repos::Branch;
 use octocrab::params::repos::Reference;
+use secrecy::{Secret, SecretString};
 use serde_json::json;
+use crate::osc;
 
-pub async  fn github_login() {
-    let crab = octocrab::Octocrab::builder()
-        .base_uri("https://github.com").unwrap()
+pub async fn authorized_instance() -> octocrab::Result<octocrab::Octocrab> {
+    let instance = octocrab::Octocrab::builder()
+        .base_uri("https://github.com/")?
         .add_header(ACCEPT, "application/json".to_string())
-        .build().unwrap();
+        .build()?;
+    let client_id: Secret<String> = SecretString::new(osc::GITHUB_ID.to_string());
+    let codes = instance.authenticate_as_device(&client_id, ["repo"]).await?;
+    println!(
+        "Go to {} and enter code {}",
+        codes.verification_uri, codes.user_code
+    );
+    let mut interval = Duration::from_secs(codes.interval);
+    let mut clock = tokio::time::interval(interval);
+    let auth = loop {
+        clock.tick().await;
+        match codes.poll_once(&instance, &client_id).await? {
+            Either::Left(auth) => break auth,
+            Either::Right(cont) => match cont {
+                Continue::SlowDown => {
+                    interval += Duration::from_secs(3);
+                    clock = tokio::time::interval(interval);
+                    clock.tick().await;
+                }
+                _ => {}
+            },
+        }
+    };
+    Ok(OctocrabBuilder::oauth(OctocrabBuilder::new(), auth).build().unwrap())
 }
 
 pub struct PullRequestDisplay {
