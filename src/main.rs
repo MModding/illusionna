@@ -1,15 +1,18 @@
-use http;
 use iced;
-use iced::{Application, Settings};
+use iced::Size;
+use crate::app::IllusionnaApp;
 
-mod gui;
+mod app;
 mod workspace;
 mod wrapper;
 mod osc; // OSC => Outside Source Control
 
-#[tokio::main]
-async fn main() -> octocrab::Result<()> {
+fn main() -> octocrab::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    gui::IllusionnaApp::run(Settings::default()).expect("IllusionnaApp execution failed");
+    iced::application("Illusionna", IllusionnaApp::update, IllusionnaApp::view)
+        .window_size(Size::new(1280f32, 720f32))
+        .resizable(false)
+        .run_with(IllusionnaApp::new)
+        .unwrap();
     Ok(())
 }

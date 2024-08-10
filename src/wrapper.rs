@@ -1,35 +1,41 @@
 use std::time::Duration;
 use either::Either;
 use http::header::ACCEPT;
-use http::HeaderName;
-use octocrab::{Error, OctocrabBuilder};
-use octocrab::auth::Continue;
+use octocrab::{Error, Octocrab, OctocrabBuilder};
+use octocrab::auth::{Continue, DeviceCodes, OAuth};
 use octocrab::models::repos::Branch;
 use octocrab::params::repos::Reference;
 use secrecy::{Secret, SecretString};
 use serde_json::json;
 use crate::osc;
 
-pub async fn authorized_instance() -> octocrab::Result<octocrab::Octocrab> {
-    let instance = octocrab::Octocrab::builder()
-        .base_uri("https://github.com/")?
+pub async fn oauth_process() -> octocrab::Result<Octocrab> {
+    let crab = Octocrab::builder()
+        .base_uri("https://github.com").unwrap()
         .add_header(ACCEPT, "application/json".to_string())
         .build()?;
+    let codes = start_authorization(&crab).await?;
+    webbrowser::open(&codes.verification_uri).expect("...");
+    cli_clipboard::set_contents(String::from(&codes.user_code)).expect("...");
+    let oauth = wait_confirm(&crab, codes).await?;
+    OctocrabBuilder::oauth(OctocrabBuilder::new(), oauth).build()
+}
+
+pub async fn start_authorization(crab: &Octocrab) -> octocrab::Result<DeviceCodes> {
     let client_id: Secret<String> = SecretString::new(osc::GITHUB_ID.to_string());
-    let codes = instance.authenticate_as_device(&client_id, ["repo"]).await?;
-    println!(
-        "Go to {} and enter code {}",
-        codes.verification_uri, codes.user_code
-    );
+    Ok(crab.authenticate_as_device(&client_id, ["repo"]).await?)
+}
+
+pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Result<OAuth> {
     let mut interval = Duration::from_secs(codes.interval);
     let mut clock = tokio::time::interval(interval);
-    let auth = loop {
+    let oauth = loop {
         clock.tick().await;
-        match codes.poll_once(&instance, &client_id).await? {
+        match codes.poll_once(crab, &SecretString::new(osc::GITHUB_ID.to_string())).await? {
             Either::Left(auth) => break auth,
             Either::Right(cont) => match cont {
                 Continue::SlowDown => {
-                    interval += Duration::from_secs(3);
+                    interval += Duration::from_secs(5);
                     clock = tokio::time::interval(interval);
                     clock.tick().await;
                 }
@@ -37,7 +43,7 @@ pub async fn authorized_instance() -> octocrab::Result<octocrab::Octocrab> {
             },
         }
     };
-    Ok(OctocrabBuilder::oauth(OctocrabBuilder::new(), auth).build().unwrap())
+    Ok(oauth)
 }
 
 pub struct PullRequestDisplay {
