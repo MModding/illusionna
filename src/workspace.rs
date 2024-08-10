@@ -1,5 +1,6 @@
 use crate::wrapper;
 use octocrab;
+use octocrab::Octocrab;
 
 struct WorkspaceInfo {
     source_owner: String,
@@ -10,15 +11,16 @@ struct WorkspaceInfo {
     workspace_description: String
 }
 
-pub async fn create_workspace(info: WorkspaceInfo) {
-    if !wrapper::already_forked(&info.source_owner, &info.fork_owner, &info.project_name).await {
-        wrapper::fork_repository(&info.source_owner, &info.project_name).await
+pub async fn create_workspace(crab: &Octocrab, info: WorkspaceInfo) {
+    if !wrapper::already_forked(&crab, &info.source_owner, &info.fork_owner, &info.project_name).await {
+        wrapper::fork_repository(&crab, &info.source_owner, &info.project_name).await
     }
     else {
-        wrapper::sync_default_branch(&info.fork_owner, &info.project_name).await;
+        wrapper::sync_default_branch(&crab, &info.fork_owner, &info.project_name).await;
     }
-    wrapper::create_branch(&info.fork_owner, &info.project_name, &info.workspace_id).await;
+    wrapper::create_branch(&crab, &info.fork_owner, &info.project_name, &info.workspace_id).await;
     wrapper::create_draft_pull_request(
+        &crab,
         &info.source_owner,
         &info.fork_owner,
         &info.project_name,

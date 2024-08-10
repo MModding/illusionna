@@ -3,7 +3,8 @@ use iced::widget::{Button, Column, Container, Image, image, Text};
 use iced::widget::image::FilterMethod;
 use iced::window::icon;
 use octocrab::Octocrab;
-use crate::wrapper::oauth_process;
+
+use crate::wrapper;
 
 #[derive(Debug, Clone)]
 enum CrabState {
@@ -12,7 +13,7 @@ enum CrabState {
 }
 
 #[derive(Debug, Clone)]
-enum Display {
+pub(crate) enum Display {
     GithubConnexion,
     ProjectCreation,
     ProjectSelection,
@@ -56,7 +57,7 @@ impl IllusionnaApp {
     pub fn update(&mut self, message: IllusionnaAppMessage) -> Task<IllusionnaAppMessage> {
         match message {
             IllusionnaAppMessage::StartDeviceFlow => {
-                Task::perform(oauth_process(), |result| {
+                Task::perform(wrapper::oauth_process(), |result| {
                     return IllusionnaAppMessage::CompleteDeviceFlow(result.unwrap());
                 })
             },

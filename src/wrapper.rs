@@ -1,8 +1,10 @@
 use std::time::Duration;
 use either::Either;
 use http::header::ACCEPT;
+use http::Uri;
 use octocrab::{Error, Octocrab, OctocrabBuilder};
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
+use octocrab::models::Author;
 use octocrab::models::repos::Branch;
 use octocrab::params::repos::Reference;
 use secrecy::{Secret, SecretString};
@@ -46,6 +48,24 @@ pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Resu
     Ok(oauth)
 }
 
+pub struct UserDisplay {
+    name: String,
+    icon: Uri,
+    bio: String,
+}
+
+pub async fn get_user(crab: &Octocrab) -> Result<(&Octocrab, Author), Error> {
+    // println!("{}", crab.get_page().await.unwrap().url)
+    crab.current().user().await.map(|x| (crab, x))
+    /* crab.users()
+    return UserDisplay {
+        name: crab.current().user().await.unwrap();
+    }; */
+}
+
+pub async fn get_forked_repositories(crab: &Octocrab) {
+}
+
 pub struct PullRequestDisplay {
     title: String,
     body: String,
@@ -64,21 +84,21 @@ pub async fn get_pulls(owner: &str, repository: &str) -> Result<Vec<PullRequestD
     return Ok(vec);
 }
 
-pub async fn already_forked(source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
-    let forks = octocrab::instance().repos(source_owner, project_name).list_forks().send().await.unwrap().items;
+pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
+    let forks = crab.repos(source_owner, project_name).list_forks().send().await.unwrap().items;
     for fork in forks {
         return fork.full_name.unwrap().split("/").collect::<Vec<&str>>()[0] == fork_owner;
     }
     return false;
 }
 
-pub async fn fork_repository(source_owner: &str, project_name: &str) {
-    octocrab::instance().repos(source_owner, project_name).create_fork().send().await.unwrap();
+pub async fn fork_repository(crab: &Octocrab, source_owner: &str, project_name: &str) {
+    crab.repos(source_owner, project_name).create_fork().send().await.unwrap();
 }
 
-pub async fn get_default_branch(owner: &str, project_name: &str) -> Option<Branch> {
-    let default_branch = octocrab::instance().repos(owner, project_name).get().await.unwrap().default_branch.unwrap();
-    let branches = octocrab::instance().repos(owner, project_name).list_branches().send().await.unwrap().items;
+pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> Option<Branch> {
+    let default_branch = crab.repos(owner, project_name).get().await.unwrap().default_branch.unwrap();
+    let branches = crab.repos(owner, project_name).list_branches().send().await.unwrap().items;
     for branch in branches {
         if branch.name == default_branch {
             return Some(branch);
@@ -87,34 +107,34 @@ pub async fn get_default_branch(owner: &str, project_name: &str) -> Option<Branc
     return None;
 }
 
-pub async fn sync_default_branch(owner: &str, project_name: &str) -> () {
+pub async fn sync_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> () {
     let route = format!(
         "/repos/{owner}/{repo}/merge-upstream",
         owner = owner,
         repo = project_name,
     );
-    octocrab::instance().post(
+    crab.post(
         route,
         Some(&json!({
             "owner": owner,
             "repo": project_name,
-            "branch": get_default_branch(owner, project_name).await.unwrap().name
+            "branch": get_default_branch(crab, owner, project_name).await.unwrap().name
         })),
     ).await.expect("Syncing did not work correctly")
 }
 
-pub async fn create_branch(owner: &str, project_name: &str, workspace_id: &str) {
-    let branch = get_default_branch(owner, project_name).await.unwrap();
-    octocrab::instance().repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
+pub async fn create_branch(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str) {
+    let branch = get_default_branch(crab, owner, project_name).await.unwrap();
+    crab.repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
 }
 
-pub async fn create_draft_pull_request(source_owner: &str, fork_owner: &str, project_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
+pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
     octocrab::instance()
         .pulls(source_owner, project_name)
         .create(
             workspace_title,
             fork_owner.to_string() + ":" + workspace_id,
-            get_default_branch(source_owner, fork_owner).await.unwrap().name
+            get_default_branch(crab, source_owner, fork_owner).await.unwrap().name
         )
         .body(workspace_description)
         .draft(true)
