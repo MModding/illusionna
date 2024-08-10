@@ -1,5 +1,7 @@
-use iced::{Alignment, Element, Length, Renderer, Task, Theme};
-use iced::widget::{Button, Column, Container, Text};
+use iced::{Alignment, Element, Length, Renderer, Task, Theme, window};
+use iced::widget::{Button, Column, Container, Image, image, Text};
+use iced::widget::image::FilterMethod;
+use iced::window::icon;
 use octocrab::Octocrab;
 use crate::wrapper::oauth_process;
 
@@ -35,7 +37,9 @@ pub enum IllusionnaAppMessage {
 impl IllusionnaApp {
 
     pub fn new() -> (Self, Task<IllusionnaAppMessage>) {
-        (IllusionnaApp { crab: CrabState::Absent, display: Display::GithubConnexion }, Task::none())
+        let icon_png = icon::from_file_data(include_bytes!("../resources/icon.png").as_slice(), None).unwrap();
+        let icon_task = window::get_latest().and_then(move |id| window::change_icon(id, icon_png.clone()));
+        (IllusionnaApp { crab: CrabState::Absent, display: Display::GithubConnexion }, icon_task)
     }
 
     pub fn get_crab(&self) -> &Octocrab {
@@ -67,12 +71,18 @@ impl IllusionnaApp {
     pub fn view(&self) -> Element<'_, IllusionnaAppMessage, Theme, Renderer> {
         return match &self.display {
             Display::GithubConnexion => {
+                let illusionna_title = Image::new(image::Handle::from_bytes(include_bytes!("../resources/title.png").as_slice()))
+                    .filter_method(FilterMethod::Nearest)
+                    .width(Length::Fixed(426f32))
+                    .height(Length::Fixed(240f32));
                 let device_auth_text = Text::new("GitHub Authentication");
                 let device_auth_button = Button::new("Login to GitHub via Device Flow").on_press(IllusionnaAppMessage::StartDeviceFlow);
-                let column = Column::new().push(device_auth_text).push(device_auth_button).align_x(Alignment::Center).spacing(10);
+                let column = Column::new().push(illusionna_title).push(device_auth_text).push(device_auth_button).align_x(Alignment::Center).spacing(10);
                 return Container::new(column).center_x(Length::Fill).center_y(Length::Fill).into();
             }
-            Display::ProjectCreation => { Container::new(Text::new("")).into() }
+            Display::ProjectCreation => {
+                Container::new(Text::new("")).into()
+            }
             Display::ProjectSelection => { Container::new(Text::new("")).into() }
             Display::WorkspaceCreation => { Container::new(Text::new("")).into() }
             Display::WorkspaceSelection => { Container::new(Text::new("")).into() }
