@@ -1,13 +1,14 @@
 use crate::workspace::ProjectInfo;
+use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::Vertical;
+use iced::widget::button::{Catalog, Status};
 use iced::widget::image::FilterMethod;
 use iced::widget::{button, image, scrollable, text, Button, Column, Container, Image, Row, Text};
 use iced::window::icon;
 use iced::{window, Alignment, Background, Border, Color, Element, Length, Renderer, Shadow, Task, Theme};
-use iced::widget::button::{Catalog, Status};
-use iced::widget::container::Style;
 use octocrab::Octocrab;
+use reqwest::Url;
 
 #[derive(Debug, Clone)]
 enum CrabState {
@@ -30,17 +31,20 @@ pub enum Display {
 pub struct IllusionnaApp {
     crab: CrabState,
     display: Display,
-    projects: Option<Vec<ProjectInfo>>
+    projects: Option<Vec<ProjectInfo>>,
+    account: Option<AccountInfo>
 }
 
 #[derive(Debug, Clone)]
 pub enum IllusionnaAppMessage {
     StartDeviceFlow,
     CompleteDeviceFlow(Octocrab),
-    ReceiveProjectInfos(Vec<ProjectInfo>)
+    ReceiveProjectInfos(Vec<ProjectInfo>),
+    ReceiveAccountInfo(AccountInfo),
+    OpenAccountProfile(Url)
 }
 
-pub fn sidebar_style(theme: &Theme, status: Status) -> button::Style {
+pub fn sidebar_style(theme: &Theme, _: Status) -> button::Style {
     let color;
     if theme.extended_palette().is_dark {
         color = Color::from_rgb8(46, 45, 62);
@@ -56,7 +60,7 @@ pub fn sidebar_style(theme: &Theme, status: Status) -> button::Style {
     }
 }
 
-pub fn button_style(theme: &Theme, status: Status) -> button::Style {
+pub fn button_style(theme: &Theme, _: Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(Color::from_rgb8(72, 68, 255))),
         text_color: theme.palette().text,
@@ -70,7 +74,7 @@ impl IllusionnaApp {
     pub fn new() -> (Self, Task<IllusionnaAppMessage>) {
         let icon_png = icon::from_file_data(include_bytes!("../resources/icon.png").as_slice(), None).unwrap();
         let icon_task = window::get_latest().and_then(move |id| window::change_icon(id, icon_png.clone()));
-        (IllusionnaApp { crab: CrabState::Absent, display: Display::GithubConnexion, projects: None }, icon_task)
+        (IllusionnaApp { crab: CrabState::Absent, display: Display::GithubConnexion, projects: None, account: None }, icon_task)
     }
 
     pub fn get_crab(&self) -> &Octocrab {
@@ -90,7 +94,7 @@ impl IllusionnaApp {
                 Task::perform(wrapper::oauth_process(), |result| {
                     return IllusionnaAppMessage::CompleteDeviceFlow(result.unwrap());
                 })
-            },
+            }
             IllusionnaAppMessage::CompleteDeviceFlow(crab) => {
                 self.crab = CrabState::Present(crab);
                 self.display = Display::ProjectSelection;
@@ -100,7 +104,19 @@ impl IllusionnaApp {
                 })
             }
             IllusionnaAppMessage::ReceiveProjectInfos(projects) => {
+                let count = projects.len();
                 self.projects = Some(projects);
+                let crab = self.get_crab().clone();
+                Task::perform(wrapper::get_account_info(crab, count), |account| {
+                    return IllusionnaAppMessage::ReceiveAccountInfo(account)
+                })
+            }
+            IllusionnaAppMessage::ReceiveAccountInfo(account) => {
+                self.account = Some(account);
+                Task::none()
+            }
+            IllusionnaAppMessage::OpenAccountProfile(url) => {
+                webbrowser::open(url.as_str()).unwrap();
                 Task::none()
             }
         }
@@ -122,8 +138,8 @@ impl IllusionnaApp {
             }
             Display::ProjectSelection => {
                 let projects: Column<IllusionnaAppMessage> = match &self.projects {
-                    Some(result) => {
-                        Column::new().extend(result.into_iter().map(|project| {
+                    Some(infos) => {
+                        Column::new().extend(infos.into_iter().map(|project| {
                             let content: Column<IllusionnaAppMessage> = Column::new()
                                 .push(
                                     text(&project.fork_name).size(16)
@@ -140,7 +156,29 @@ impl IllusionnaApp {
                     }
                     None => Column::new()
                 };
-                scrollable(projects).anchor_left().into()
+                let scroll = scrollable(projects).anchor_left();
+                let account = Container::new(match &self.account {
+                    Some(info) => {
+                        let content: Row<IllusionnaAppMessage> = Row::new()
+                            .push(Image::new(&info.avatar).width(Length::Fixed(48f32)).height(48f32))
+                            .push(
+                                Column::new()
+                                    .push(text(&info.name).size(20))
+                                    .push(text(format!("{} Compatible Projects", &info.count)).size(10))
+                                    .spacing(6)
+                            )
+                            .align_y(Vertical::Center)
+                            .spacing(12);
+                        let button = Button::new(content)
+                            .width(Length::Fixed(256f32))
+                            .padding(10)
+                            .style(|theme, status| button::Style { border: Border::default().rounded(10), ..sidebar_style(theme, status) })
+                            .on_press(IllusionnaAppMessage::OpenAccountProfile(info.clone().profile));
+                        Column::new().push(button)
+                    }
+                    None => Column::new()
+                }).align_right(Length::Fill).align_bottom(Length::Fill);
+                Row::new().push(scroll).push(account).into()
             }
             Display::ProjectCreation => { Container::new(Text::new("")).into() }
             Display::WorkspaceSelection => { Container::new(Text::new("")).into() }

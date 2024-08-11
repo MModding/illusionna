@@ -54,19 +54,22 @@ pub async fn get_image(url: Url) -> Result<image::Handle, reqwest::Error> {
     Ok(image::Handle::from_bytes(reqwest::get(url).await?.bytes().await?))
 }
 
-pub struct UserDisplay {
-    name: String,
-    icon: Uri,
-    bio: String,
+#[derive(Debug, Clone)]
+pub struct AccountInfo {
+    pub name: String,
+    pub avatar: image::Handle,
+    pub count: usize,
+    pub profile: Url
 }
 
-pub async fn get_user(crab: &Octocrab) {
-    // println!("{}", crab.get_page().await.unwrap().url)
-    crab.current().user().await.unwrap().url;
-    /* crab.users()
-    return UserDisplay {
-        name: crab.current().user().await.unwrap();
-    }; */
+pub async fn get_account_info(crab: Octocrab, count: usize) -> AccountInfo {
+    let author = crab.current().user().await.unwrap();
+    AccountInfo {
+        name: author.login,
+        avatar: get_image(author.avatar_url).await.unwrap(),
+        count,
+        profile: author.html_url
+    }
 }
 
 pub async fn get_forked_repositories(crab: &Octocrab) -> Vec<Repository> {
