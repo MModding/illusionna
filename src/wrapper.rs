@@ -1,15 +1,17 @@
-use std::time::Duration;
+use crate::osc;
 use either::Either;
 use http::header::ACCEPT;
 use http::Uri;
-use octocrab::{Error, Octocrab, OctocrabBuilder};
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
-use octocrab::models::Author;
 use octocrab::models::repos::Branch;
+use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
+use octocrab::{Error, Octocrab, OctocrabBuilder};
 use secrecy::{Secret, SecretString};
 use serde_json::json;
-use crate::osc;
+use std::time::Duration;
+use iced::widget::image;
+use reqwest::Url;
 
 pub async fn oauth_process() -> octocrab::Result<Octocrab> {
     let crab = Octocrab::builder()
@@ -48,22 +50,35 @@ pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Resu
     Ok(oauth)
 }
 
+pub async fn get_image(url: Url) -> Result<image::Handle, reqwest::Error> {
+    Ok(image::Handle::from_bytes(reqwest::get(url).await?.bytes().await?))
+}
+
 pub struct UserDisplay {
     name: String,
     icon: Uri,
     bio: String,
 }
 
-pub async fn get_user(crab: &Octocrab) -> Result<(&Octocrab, Author), Error> {
+pub async fn get_user(crab: &Octocrab) {
     // println!("{}", crab.get_page().await.unwrap().url)
-    crab.current().user().await.map(|x| (crab, x))
+    crab.current().user().await.unwrap().url;
     /* crab.users()
     return UserDisplay {
         name: crab.current().user().await.unwrap();
     }; */
 }
 
-pub async fn get_forked_repositories(crab: &Octocrab) {
+pub async fn get_forked_repositories(crab: &Octocrab) -> Vec<Repository> {
+    crab.current()
+        .list_repos_for_authenticated_user()
+        .send()
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|x| x.fork.unwrap())
+        .collect::<Vec<Repository>>()
 }
 
 pub struct PullRequestDisplay {
@@ -81,7 +96,7 @@ pub async fn get_pulls(owner: &str, repository: &str) -> Result<Vec<PullRequestD
         let author_avatar_url = pull_request.user.unwrap().avatar_url;
         vec.push(PullRequestDisplay { title, body, author_avatar_url: String::from(author_avatar_url) });
     }
-    return Ok(vec);
+    Ok(vec)
 }
 
 pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
@@ -89,7 +104,7 @@ pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &st
     for fork in forks {
         return fork.full_name.unwrap().split("/").collect::<Vec<&str>>()[0] == fork_owner;
     }
-    return false;
+    false
 }
 
 pub async fn fork_repository(crab: &Octocrab, source_owner: &str, project_name: &str) {
@@ -97,14 +112,14 @@ pub async fn fork_repository(crab: &Octocrab, source_owner: &str, project_name: 
 }
 
 pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> Option<Branch> {
-    let default_branch = crab.repos(owner, project_name).get().await.unwrap().default_branch.unwrap();
+    let default_branch = crab.repos(owner, project_name).get().await.unwrap().default_branch?;
     let branches = crab.repos(owner, project_name).list_branches().send().await.unwrap().items;
     for branch in branches {
         if branch.name == default_branch {
             return Some(branch);
         }
     }
-    return None;
+    None
 }
 
 pub async fn sync_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> () {
