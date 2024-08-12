@@ -1,7 +1,6 @@
 use crate::osc;
 use either::Either;
 use http::header::ACCEPT;
-use http::Uri;
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
 use octocrab::models::repos::Branch;
 use octocrab::models::Repository;

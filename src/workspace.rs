@@ -2,7 +2,6 @@ use iced::widget::image;
 use crate::wrapper;
 use octocrab;
 use octocrab::Octocrab;
-use reqwest::Url;
 
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
@@ -26,10 +25,10 @@ pub async fn get_projects(crab: Octocrab) -> Vec<ProjectInfo> {
                 source_owner: source_owner.login,
                 source_owner_icon: wrapper::get_image(source_owner.avatar_url).await.unwrap(),
                 source_name: source_repository.name.clone(),
-                source_description: source_repository.description.clone().unwrap_or("".to_string()),
+                source_description: source_repository.description.clone().unwrap_or("Blank Description".to_string()),
                 fork_owner: repository.owner.unwrap().login,
                 fork_name: repository.name,
-                fork_description: repository.description.unwrap_or("".to_string())
+                fork_description: repository.description.unwrap_or("Blank Description".to_string())
             }
         )
     }
