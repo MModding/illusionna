@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build
       env:
-        ILLUSIONNA_GITHUB_APP: ${{ vars.ILLUSIONNA_GITHUB_APP }}
+        ILLUSIONNA_GITHUB_APP: ${{ secrets.ILLUSIONNA_GITHUB_APP }}
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
