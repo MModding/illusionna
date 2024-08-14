@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use iced;
 use iced::{Font, Size};
 use crate::app::IllusionnaApp;
