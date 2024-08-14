@@ -2,7 +2,7 @@ use crate::workspace::ProjectInfo;
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::button::{Catalog, Status};
+use iced::widget::button::Status;
 use iced::widget::image::FilterMethod;
 use iced::widget::{button, image, scrollable, text, Button, Column, Container, Image, Row, Text};
 use iced::window::icon;

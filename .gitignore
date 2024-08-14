@@ -26,6 +26,3 @@ workspace/
 # Added by cargo
 
 /target
-
-# Outside Source Control
-src/osc.rs

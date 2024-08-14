@@ -1,16 +1,19 @@
-use crate::osc;
 use either::Either;
 use http::header::ACCEPT;
+use iced::widget::image;
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
 use octocrab::models::repos::Branch;
 use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
 use octocrab::{Error, Octocrab, OctocrabBuilder};
-use secrecy::{Secret, SecretString};
-use serde_json::json;
-use std::time::Duration;
-use iced::widget::image;
 use reqwest::Url;
+use secrecy::SecretString;
+use serde_json::json;
+use std::convert::Into;
+use std::string::ToString;
+use std::time::Duration;
+
+pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
 pub async fn oauth_process() -> octocrab::Result<Octocrab> {
     let crab = Octocrab::builder()
@@ -25,8 +28,7 @@ pub async fn oauth_process() -> octocrab::Result<Octocrab> {
 }
 
 pub async fn start_authorization(crab: &Octocrab) -> octocrab::Result<DeviceCodes> {
-    let client_id: Secret<String> = SecretString::new(osc::GITHUB_ID.to_string());
-    Ok(crab.authenticate_as_device(&client_id, ["repo"]).await?)
+    Ok(crab.authenticate_as_device(&SecretString::new(ILLUSIONNA_GITHUB_APP.to_string()), ["repo"]).await?)
 }
 
 pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Result<OAuth> {
@@ -34,7 +36,7 @@ pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Resu
     let mut clock = tokio::time::interval(interval);
     let oauth = loop {
         clock.tick().await;
-        match codes.poll_once(crab, &SecretString::new(osc::GITHUB_ID.to_string())).await? {
+        match codes.poll_once(crab, &SecretString::new(ILLUSIONNA_GITHUB_APP.to_string())).await? {
             Either::Left(auth) => break auth,
             Either::Right(cont) => match cont {
                 Continue::SlowDown => {
