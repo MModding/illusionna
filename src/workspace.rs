@@ -35,6 +35,22 @@ pub async fn get_projects(crab: Octocrab) -> Vec<ProjectInfo> {
     projects
 }
 
+pub async fn create_project(crab: Octocrab, author: String, project: String) -> ProjectInfo {
+    let repository = wrapper::fork_repository(crab, Box::leak(author.into_boxed_str()), Box::leak(project.into_boxed_str())).await;
+    let owner = repository.owner.unwrap();
+    let parent = repository.parent.unwrap();
+    let parent_owner = parent.owner.unwrap();
+    ProjectInfo {
+        source_owner: parent_owner.login,
+        source_owner_icon: wrapper::get_image(parent_owner.avatar_url).await.unwrap(),
+        source_name: parent.name,
+        source_description: parent.description.unwrap_or("Blank Description".to_string()),
+        fork_owner: owner.login,
+        fork_name: repository.name,
+        fork_description: repository.description.unwrap_or("Blank Description".to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceInfo {
     source_owner: String,
@@ -47,7 +63,7 @@ pub struct WorkspaceInfo {
 
 pub async fn create_workspace(crab: &Octocrab, info: WorkspaceInfo) {
     if !wrapper::already_forked(crab, &info.source_owner, &info.fork_owner, &info.project_name).await {
-        wrapper::fork_repository(crab, &info.source_owner, &info.project_name).await
+        wrapper::fork_repository(crab.clone(), &info.source_owner, &info.project_name).await;
     }
     else {
         wrapper::sync_default_branch(crab, &info.fork_owner, &info.project_name).await;

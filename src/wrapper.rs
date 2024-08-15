@@ -85,6 +85,10 @@ pub async fn get_forked_repositories(crab: &Octocrab) -> Vec<Repository> {
         .collect::<Vec<Repository>>()
 }
 
+pub async fn repository_exists(crab: Octocrab, author: String, project: String) -> bool {
+    crab.repos(author, project).get().await.is_ok()
+}
+
 pub struct PullRequestDisplay {
     title: String,
     body: String,
@@ -111,8 +115,8 @@ pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &st
     false
 }
 
-pub async fn fork_repository(crab: &Octocrab, source_owner: &str, project_name: &str) {
-    crab.repos(source_owner, project_name).create_fork().send().await.unwrap();
+pub async fn fork_repository(crab: Octocrab, source_owner: &str, project_name: &str) -> Repository {
+    crab.repos(source_owner, project_name).create_fork().send().await.unwrap()
 }
 
 pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> Option<Branch> {
