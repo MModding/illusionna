@@ -1,4 +1,4 @@
-use crate::workspace::ProjectInfo;
+use crate::workspace::{ProjectInfo, WorkspaceInfo};
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
@@ -6,7 +6,7 @@ use iced::widget::button::Status;
 use iced::widget::image::FilterMethod;
 use iced::widget::{button, image, scrollable, text, Button, Column, Container, Image, Row, Text, TextInput};
 use iced::window::icon;
-use iced::{window, Alignment, Background, Border, Color, Element, Length, Renderer, Shadow, Task, Theme};
+use iced::{window, Alignment, Background, Border, Color, Degrees, Element, Length, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
 use octocrab::Octocrab;
 use reqwest::Url;
 
@@ -21,12 +21,10 @@ enum CrabState {
 #[derive(Debug, Clone)]
 pub enum Display {
     GithubConnexion,
-    ProjectCreation,
     ProjectSelection,
-    WorkspaceCreation,
     WorkspaceSelection,
-    ModificationCreation,
-    WorkingModification
+    WorkspaceCreation,
+    WorkspaceContent
 }
 
 #[derive(Debug, Clone)]
@@ -38,17 +36,23 @@ pub enum ReferenceValidation {
 
 #[derive(Debug, Clone)]
 pub struct IllusionnaApp {
+    rotator: u16,
     crab: CrabState,
     display: Display,
     projects: Option<Vec<ProjectInfo>>,
     selected_project: Option<ProjectInfo>,
     project_creation_text: String,
     project_creation_validation: ReferenceValidation,
-    account: Option<AccountInfo>
+    account: Option<AccountInfo>,
+    workspaces: Option<Vec<WorkspaceInfo>>,
+    workspace_creation_title_text: String,
+    workspace_creation_id_text: String,
+    workspace_creation_description_text: String,
 }
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
+    Tick,
     StartDeviceFlow,
     CompleteDeviceFlow(Octocrab),
     ReceiveProjectInfos(Vec<ProjectInfo>),
@@ -59,7 +63,11 @@ pub enum Interaction {
     CreateProject,
     OpenAccountProfile(Url),
     OpenSelectedProject,
-    OpenCreatedProject(ProjectInfo)
+    AppendCreatedProject(ProjectInfo),
+    ReceiveWorkspaceInfos(Vec<WorkspaceInfo>),
+    DisplayProjectList,
+    CreateNewWorkspace,
+    ProcessNewWorkspace
 }
 
 pub fn sidebar_button(theme: &Theme, status: Status) -> button::Style {
@@ -102,16 +110,25 @@ impl IllusionnaApp {
         let icon_task = window::get_latest().and_then(move |id| window::change_icon(id, icon_png.clone()));
         (
             IllusionnaApp {
+                rotator: 0u16,
                 crab: CrabState::Absent,
                 display: Display::GithubConnexion,
                 projects: None,
                 selected_project: None,
                 project_creation_text: "".to_string(),
                 project_creation_validation: ReferenceValidation::Unspecified,
-                account: None
+                account: None,
+                workspaces: None,
+                workspace_creation_title_text: "".to_string(),
+                workspace_creation_id_text: "".to_string(),
+                workspace_creation_description_text: "".to_string()
             },
             icon_task
         )
+    }
+
+    pub fn ticker(&self) -> Subscription<Interaction> {
+        window::frames().map(|x| Interaction::Tick)
     }
 
     pub fn get_crab(&self) -> &Octocrab {
@@ -127,6 +144,10 @@ impl IllusionnaApp {
 
     pub fn update(&mut self, message: Interaction) -> Task<Interaction> {
         match message {
+            Interaction::Tick => {
+                self.rotator = (self.rotator + 1) % 360;
+                Task::none()
+            }
             Interaction::StartDeviceFlow => {
                 Task::perform(wrapper::oauth_process(), |result| {
                     return Interaction::CompleteDeviceFlow(result.unwrap());
@@ -204,7 +225,7 @@ impl IllusionnaApp {
                         let project = split[1].to_string();
                         let crab = self.get_crab().clone();
                         Task::perform(workspace::create_project(crab.clone(), author.clone(), project.clone()), move |result| {
-                            Interaction::OpenCreatedProject(result)
+                            Interaction::AppendCreatedProject(result)
                         })
                     }
                     _ => Task::none()
@@ -216,11 +237,33 @@ impl IllusionnaApp {
             }
             Interaction::OpenSelectedProject => {
                 self.display = Display::WorkspaceSelection;
+                let crab = self.get_crab().clone();
+                let project = self.selected_project.clone().unwrap();
+                Task::perform(workspace::get_workspaces(crab.clone(), project.clone()), |workspaces| {
+                    Interaction::ReceiveWorkspaceInfos(workspaces)
+                })
+            }
+            Interaction::AppendCreatedProject(project) => {
+                let mut projects = self.projects.clone().unwrap();
+                projects.insert(0, project.clone());
+                self.projects = Some(projects);
+                self.selected_project = Some(project);
                 Task::none()
             }
-            Interaction::OpenCreatedProject(project) => {
-                self.selected_project = Some(project);
-                self.display = Display::WorkspaceSelection;
+            Interaction::ReceiveWorkspaceInfos(workspaces) => {
+                self.workspaces = Some(workspaces);
+                Task::none()
+            }
+            Interaction::DisplayProjectList => {
+                self.display = Display::ProjectSelection;
+                self.workspaces = None;
+                Task::none()
+            }
+            Interaction::CreateNewWorkspace => {
+                self.display = Display::WorkspaceCreation;
+                Task::none()
+            }
+            Interaction::ProcessNewWorkspace => {
                 Task::none()
             }
         }
@@ -230,11 +273,9 @@ impl IllusionnaApp {
         match &self.display {
             Display::GithubConnexion => self.github_connection(),
             Display::ProjectSelection => self.project_selection(),
-            Display::ProjectCreation => self.project_creation(),
-            Display::WorkspaceSelection => self.workspace_selection(),
             Display::WorkspaceCreation => self.workspace_creation(),
-            Display::ModificationCreation => self.modification_creation(),
-            Display::WorkingModification => self.working_modification()
+            Display::WorkspaceSelection => self.workspace_selection(),
+            Display::WorkspaceContent => self.workspace_content()
         }
     }
 
@@ -267,7 +308,7 @@ impl IllusionnaApp {
                         .spacing(10);
                     Button::new(content)
                         .width(Length::Fixed(256f32))
-                        .height(64f32)
+                        .height(Length::Fixed(64f32))
                         .style(sidebar_button)
                         .on_press(Interaction::SelectProjectInfo(project.clone().fork_name))
                         .into()
@@ -348,33 +389,108 @@ impl IllusionnaApp {
                     .push(Column::new().push(project_info).push(creation_and_account)).into()
             }
             None => {
-                Container::new(Image::new(image::Handle::from_bytes(ICON)).width(Length::Fixed(48f32)).height(48f32))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(Horizontal::Center)
-                    .align_y(Vertical::Center)
-                    .into()
+                Container::new(
+                    Image::new(image::Handle::from_bytes(ICON))
+                        .width(Length::Fixed(48f32))
+                        .height(Length::Fixed(48f32))
+                        .rotation(Rotation::Floating(Radians::from(Degrees(self.rotator as f32))))
+                ).center(Length::Fill).into()
             }
         }
     }
 
-    fn project_creation(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        Text::new("").into()
-    }
-
     fn workspace_selection(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        Text::new("").into()
+        fn display_workspace(title: String, id: String) -> Button<'static, Interaction> {
+            Button::new(
+                Container::new(
+                    Column::new()
+                        .push(Text::new(title).size(16))
+                        .push(Text::new(id).size(12))
+                        .spacing(6)
+                ).padding(6).width(Length::Fixed(320f32)).height(Length::Fixed(96f32))
+            ).style(large_button)
+        }
+        let selected_project = self.selected_project.clone().unwrap();
+        let workspaces_widget = match &self.workspaces {
+            Some(workspaces) => {
+                if !workspaces.is_empty() {
+                    let iterations = workspaces.len().div_euclid(2);
+                    let mut column = vec![];
+                    for i in 0..iterations {
+                        let mut row = vec![];
+                        let first_info = workspaces.get(i).unwrap();
+                        row.push(display_workspace(first_info.workspace_title.to_string(), first_info.workspace_id.to_string()));
+                        if i + 1 < workspaces.len() {
+                            let second_info = workspaces.get(i + 1).unwrap();
+                            row.push(display_workspace(second_info.workspace_title.to_string(), second_info.workspace_id.to_string()))
+                        }
+                        column.push(Row::new().extend(row.into_iter().map(|x| x.into())).spacing(6));
+                    }
+                    if workspaces.len() % 2 == 1 {
+                        let last = workspaces.last().unwrap();
+                        column.push(
+                            Row::new()
+                                .push(display_workspace(last.workspace_title.to_string(), last.workspace_id.to_string()))
+                        );
+                    }
+                    Column::new()
+                        .extend(column.into_iter().map(|x| x.into()))
+                        .width(Length::Fill).align_x(Horizontal::Center)
+                }
+                else {
+                    Column::new()
+                }
+            }
+            None => Column::new().push(
+                Container::new(
+                    Image::new(image::Handle::from_bytes(ICON))
+                        .width(Length::Fixed(32f32))
+                        .height(Length::Fixed(32f32))
+                        .rotation(Rotation::Floating(Radians::from(Degrees(self.rotator as f32))))
+                ).center_x(Length::Fill).center_y(288f32)
+            )
+        };
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(Image::new(selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(64f32))
+                            .push(Text::new(selected_project.source_owner).size(28))
+                            .spacing(10)
+                            .align_y(Vertical::Center)
+                    )
+                    .push(
+                        Text::new(format!("{} ({})", selected_project.fork_name, selected_project.source_name)).size(28).width(Length::Fill).align_x(Horizontal::Right)
+                    )
+                    .padding(25)
+                    .align_y(Vertical::Center)
+            )
+            .push(scrollable(workspaces_widget).height(Length::Fixed(288f32)))
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .push(Button::new(Text::new("Return back to Projects List")).style(small_button).on_press(Interaction::DisplayProjectList))
+                    )
+                    .push(
+                        Column::new()
+                            .push(Button::new(Text::new("Create New Workspace")).style(small_button).on_press(Interaction::CreateNewWorkspace))
+                            .width(Length::Fill)
+                            .align_x(Horizontal::Right)
+                    )
+                    .height(Length::Fill)
+                    .align_y(Vertical::Bottom)
+                    .padding(10)
+            )
+            .into()
     }
 
     fn workspace_creation(&self) -> Element<'_, Interaction, Theme, Renderer> {
         Text::new("").into()
     }
 
-    fn modification_creation(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        Text::new("").into()
-    }
-
-    fn working_modification(&self) -> Element<'_, Interaction, Theme, Renderer> {
+    fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {
         Text::new("").into()
     }
 }

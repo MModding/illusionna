@@ -5,13 +5,14 @@ use octocrab::auth::{Continue, DeviceCodes, OAuth};
 use octocrab::models::repos::Branch;
 use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
-use octocrab::{Error, Octocrab, OctocrabBuilder};
+use octocrab::{Octocrab, OctocrabBuilder};
 use reqwest::Url;
 use secrecy::SecretString;
 use serde_json::json;
 use std::convert::Into;
 use std::string::ToString;
 use std::time::Duration;
+use octocrab::models::pulls::PullRequest;
 
 pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
@@ -76,6 +77,7 @@ pub async fn get_account_info(crab: Octocrab, count: usize) -> AccountInfo {
 pub async fn get_forked_repositories(crab: &Octocrab) -> Vec<Repository> {
     crab.current()
         .list_repos_for_authenticated_user()
+        .per_page(100)
         .send()
         .await
         .unwrap()
@@ -89,7 +91,7 @@ pub async fn repository_exists(crab: Octocrab, author: String, project: String) 
     crab.repos(author, project).get().await.is_ok()
 }
 
-pub struct PullRequestDisplay {
+/* pub struct PullRequestDisplay {
     title: String,
     body: String,
     author_avatar_url: String
@@ -105,7 +107,7 @@ pub async fn get_pulls(owner: &str, repository: &str) -> Result<Vec<PullRequestD
         vec.push(PullRequestDisplay { title, body, author_avatar_url: String::from(author_avatar_url) });
     }
     Ok(vec)
-}
+} */
 
 pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
     let forks = crab.repos(source_owner, project_name).list_forks().send().await.unwrap().items;
@@ -117,6 +119,21 @@ pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &st
 
 pub async fn fork_repository(crab: Octocrab, source_owner: &str, project_name: &str) -> Repository {
     crab.repos(source_owner, project_name).create_fork().send().await.unwrap()
+}
+
+pub async fn get_pull_requests(crab: &Octocrab, owner: &str, project_name: &str) -> Vec<PullRequest> {
+    let name = crab.current().user().await.unwrap().login;
+    match crab.pulls(owner, project_name).list().send().await {
+        Ok(pulls) => {
+            pulls.items.into_iter().filter(|pull| {
+                match &pull.user {
+                    Some(author) => author.login == name,
+                    None => false
+                }
+            }).collect::<Vec<PullRequest>>()
+        }
+        Err(_) => vec![]
+    }
 }
 
 pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> Option<Branch> {
@@ -151,13 +168,13 @@ pub async fn create_branch(crab: &Octocrab, owner: &str, project_name: &str, wor
     crab.repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
 }
 
-pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
+pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, source_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
     octocrab::instance()
-        .pulls(source_owner, project_name)
+        .pulls(source_owner, source_name)
         .create(
             workspace_title,
             fork_owner.to_string() + ":" + workspace_id,
-            get_default_branch(crab, source_owner, fork_owner).await.unwrap().name
+            get_default_branch(crab, source_owner, source_name).await.unwrap().name
         )
         .body(workspace_description)
         .draft(true)

@@ -14,6 +14,7 @@ fn main() -> octocrab::Result<()> {
         .resizable(false)
         .font(include_bytes!("../resources/inter.ttf").as_slice())
         .default_font(Font::with_name("Inter 24pt"))
+        .subscription(IllusionnaApp::ticker)
         .run_with(IllusionnaApp::new)
         .unwrap();
     Ok(())
