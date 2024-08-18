@@ -4,7 +4,7 @@ use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::button::Status;
 use iced::widget::image::FilterMethod;
-use iced::widget::{button, image, scrollable, text, Button, Column, Container, Image, Row, Text, TextInput};
+use iced::widget::{button, image, scrollable, text, Button, Checkbox, Column, Container, Image, Row, Text, TextInput};
 use iced::window::icon;
 use iced::{window, Alignment, Background, Border, Color, Degrees, Element, Length, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
 use octocrab::Octocrab;
@@ -45,6 +45,7 @@ pub struct IllusionnaApp {
     project_creation_validation: ReferenceValidation,
     account: Option<AccountInfo>,
     workspaces: Option<Vec<WorkspaceInfo>>,
+    show_closed: bool,
     workspace_creation_title_text: String,
     workspace_creation_id_text: String,
     workspace_creation_description_text: String,
@@ -66,6 +67,7 @@ pub enum Interaction {
     AppendCreatedProject(ProjectInfo),
     ReceiveWorkspaceInfos(Vec<WorkspaceInfo>),
     DisplayProjectList,
+    ToggleClosedWorkspaces(bool),
     CreateNewWorkspace,
     ProcessNewWorkspace
 }
@@ -119,6 +121,7 @@ impl IllusionnaApp {
                 project_creation_validation: ReferenceValidation::Unspecified,
                 account: None,
                 workspaces: None,
+                show_closed: false,
                 workspace_creation_title_text: "".to_string(),
                 workspace_creation_id_text: "".to_string(),
                 workspace_creation_description_text: "".to_string()
@@ -239,7 +242,7 @@ impl IllusionnaApp {
                 self.display = Display::WorkspaceSelection;
                 let crab = self.get_crab().clone();
                 let project = self.selected_project.clone().unwrap();
-                Task::perform(workspace::get_workspaces(crab.clone(), project.clone()), |workspaces| {
+                Task::perform(workspace::get_workspaces(crab.clone(), project.clone(), false), |workspaces| {
                     Interaction::ReceiveWorkspaceInfos(workspaces)
                 })
             }
@@ -258,6 +261,15 @@ impl IllusionnaApp {
                 self.display = Display::ProjectSelection;
                 self.workspaces = None;
                 Task::none()
+            }
+            Interaction::ToggleClosedWorkspaces(toggle) => {
+                self.workspaces = None;
+                self.show_closed = toggle;
+                let crab = self.get_crab().clone();
+                let project = self.selected_project.clone().unwrap();
+                Task::perform(workspace::get_workspaces(crab.clone(), project.clone(), toggle), |workspaces| {
+                    Interaction::ReceiveWorkspaceInfos(workspaces)
+                })
             }
             Interaction::CreateNewWorkspace => {
                 self.display = Display::WorkspaceCreation;
@@ -468,20 +480,28 @@ impl IllusionnaApp {
             )
             .push(scrollable(workspaces_widget).height(Length::Fixed(288f32)))
             .push(
-                Row::new()
-                    .push(
-                        Column::new()
-                            .push(Button::new(Text::new("Return back to Projects List")).style(small_button).on_press(Interaction::DisplayProjectList))
-                    )
-                    .push(
-                        Column::new()
-                            .push(Button::new(Text::new("Create New Workspace")).style(small_button).on_press(Interaction::CreateNewWorkspace))
-                            .width(Length::Fill)
-                            .align_x(Horizontal::Right)
-                    )
-                    .height(Length::Fill)
-                    .align_y(Vertical::Bottom)
-                    .padding(10)
+                Container::new(
+                    Row::new()
+                        .push(
+                            Column::new()
+                                .push(Button::new(Text::new("Return back to Projects List")).style(small_button).on_press(Interaction::DisplayProjectList))
+                                .width(Length::Fill)
+                                .align_x(Horizontal::Left)
+                        )
+                        .push(
+                            Column::new()
+                                .push(Checkbox::new("Display Closed Workspaces", self.show_closed).on_toggle(Interaction::ToggleClosedWorkspaces))
+                                .width(Length::Fill)
+                                .align_x(Horizontal::Center)
+                        )
+                        .push(
+                            Column::new()
+                                .push(Button::new(Text::new("Create New Workspace")).style(small_button).on_press(Interaction::CreateNewWorkspace))
+                                .width(Length::Fill)
+                                .align_x(Horizontal::Right)
+                        )
+                        .align_y(Vertical::Center)
+                ).align_bottom(Length::Fill).padding(10)
             )
             .into()
     }

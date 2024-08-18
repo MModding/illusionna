@@ -13,6 +13,7 @@ use std::convert::Into;
 use std::string::ToString;
 use std::time::Duration;
 use octocrab::models::pulls::PullRequest;
+use octocrab::params::State;
 
 pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
@@ -121,9 +122,9 @@ pub async fn fork_repository(crab: Octocrab, source_owner: &str, project_name: &
     crab.repos(source_owner, project_name).create_fork().send().await.unwrap()
 }
 
-pub async fn get_pull_requests(crab: &Octocrab, owner: &str, project_name: &str) -> Vec<PullRequest> {
+pub async fn get_pull_requests(crab: &Octocrab, owner: &str, project_name: &str, all: bool) -> Vec<PullRequest> {
     let name = crab.current().user().await.unwrap().login;
-    match crab.pulls(owner, project_name).list().send().await {
+    match crab.pulls(owner, project_name).list().state(if all {State::All} else {State::Open}).per_page(100).send().await {
         Ok(pulls) => {
             pulls.items.into_iter().filter(|pull| {
                 match &pull.user {

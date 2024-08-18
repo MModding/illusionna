@@ -59,8 +59,8 @@ pub struct WorkspaceInfo {
     pub workspace_description: String
 }
 
-pub async fn get_workspaces(crab: Octocrab, project_info: ProjectInfo) -> Vec<WorkspaceInfo> {
-    wrapper::get_pull_requests(&crab, &project_info.source_owner, &project_info.source_name).await.into_iter()
+pub async fn get_workspaces(crab: Octocrab, project_info: ProjectInfo, all: bool) -> Vec<WorkspaceInfo> {
+    wrapper::get_pull_requests(&crab, &project_info.source_owner, &project_info.source_name, all).await.into_iter()
         .map(move |x| WorkspaceInfo {
             project: project_info.clone(),
             workspace_title: x.title.unwrap_or("Blank Title".to_string()),
