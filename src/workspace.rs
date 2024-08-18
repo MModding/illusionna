@@ -54,7 +54,7 @@ pub async fn create_project(crab: Octocrab, author: String, project: String) -> 
 #[derive(Debug, Clone)]
 pub struct WorkspaceInfo {
     pub project: ProjectInfo,
-    pub workspace_title: String,
+    pub workspace_name: String,
     pub workspace_id: String,
     pub workspace_description: String
 }
@@ -63,22 +63,23 @@ pub async fn get_workspaces(crab: Octocrab, project_info: ProjectInfo, all: bool
     wrapper::get_pull_requests(&crab, &project_info.source_owner, &project_info.source_name, all).await.into_iter()
         .map(move |x| WorkspaceInfo {
             project: project_info.clone(),
-            workspace_title: x.title.unwrap_or("Blank Title".to_string()),
+            workspace_name: x.title.unwrap_or("Blank Title".to_string()),
             workspace_id: x.head.label.unwrap(),
             workspace_description: x.body.unwrap_or("Blank Description".to_string())
         })
         .collect::<Vec<WorkspaceInfo>>()
 }
 
-pub async fn create_workspace(crab: &Octocrab, info: WorkspaceInfo) {
-    wrapper::sync_default_branch(crab, &info.project.fork_owner, &info.project.fork_name).await;
-    wrapper::create_branch(crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
+pub async fn create_workspace(crab: Octocrab, info: WorkspaceInfo) {
+    wrapper::sync_default_branch(&crab, &info.project.fork_owner, &info.project.fork_name).await;
+    wrapper::create_branch(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
+    wrapper::create_empty_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
     wrapper::create_draft_pull_request(
-        crab,
+        &crab,
         &info.project.source_owner,
         &info.project.fork_owner,
         &info.project.source_name,
-        &info.workspace_title,
+        &info.workspace_name,
         &info.workspace_id,
         &info.workspace_description
     ).await;

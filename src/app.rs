@@ -46,7 +46,7 @@ pub struct IllusionnaApp {
     account: Option<AccountInfo>,
     workspaces: Option<Vec<WorkspaceInfo>>,
     show_closed: bool,
-    workspace_creation_title_text: String,
+    workspace_creation_name_text: String,
     workspace_creation_id_text: String,
     workspace_creation_description_text: String,
 }
@@ -66,10 +66,14 @@ pub enum Interaction {
     OpenSelectedProject,
     AppendCreatedProject(ProjectInfo),
     ReceiveWorkspaceInfos(Vec<WorkspaceInfo>),
-    DisplayProjectList,
+    DisplayProjectsList,
     ToggleClosedWorkspaces(bool),
     CreateNewWorkspace,
-    ProcessNewWorkspace
+    WorkspaceNameInput(String),
+    WorkspaceIdInput(String),
+    WorkspaceDescriptionInput(String),
+    ProcessNewWorkspace,
+    DisplayWorkspacesList,
 }
 
 pub fn sidebar_button(theme: &Theme, status: Status) -> button::Style {
@@ -96,13 +100,8 @@ pub fn large_button(theme: &Theme, status: Status) -> button::Style {
     button::Style { border: Border::default().rounded(10), ..sidebar_button(theme, status) }
 }
 
-pub fn small_button(theme: &Theme, _: Status) -> button::Style {
-    button::Style {
-        background: Some(Background::Color(Color::from_rgb8(72, 68, 255))),
-        text_color: theme.palette().text,
-        border: Border::default().rounded(3),
-        shadow: Shadow::default()
-    }
+pub fn small_button(theme: &Theme, status: Status) -> button::Style {
+    button::Style { border: Border::default().rounded(3), ..large_button(theme, status) }
 }
 
 impl IllusionnaApp {
@@ -122,7 +121,7 @@ impl IllusionnaApp {
                 account: None,
                 workspaces: None,
                 show_closed: false,
-                workspace_creation_title_text: "".to_string(),
+                workspace_creation_name_text: "".to_string(),
                 workspace_creation_id_text: "".to_string(),
                 workspace_creation_description_text: "".to_string()
             },
@@ -257,7 +256,7 @@ impl IllusionnaApp {
                 self.workspaces = Some(workspaces);
                 Task::none()
             }
-            Interaction::DisplayProjectList => {
+            Interaction::DisplayProjectsList => {
                 self.display = Display::ProjectSelection;
                 self.workspaces = None;
                 Task::none()
@@ -275,7 +274,41 @@ impl IllusionnaApp {
                 self.display = Display::WorkspaceCreation;
                 Task::none()
             }
+            Interaction::WorkspaceNameInput(input) => {
+                self.workspace_creation_name_text = input;
+                Task::none()
+            }
+            Interaction::WorkspaceIdInput(input) => {
+                let filtered_input = input.chars()
+                    .filter(|char| matches!(*char, 'a'..='z') | matches!(*char, '0'..='9') | char.eq(&'-') | char.eq(&'/'))
+                    .collect::<String>();
+                self.workspace_creation_id_text = filtered_input;
+                Task::none()
+            }
+            Interaction::WorkspaceDescriptionInput(input) => {
+                self.workspace_creation_description_text = input;
+                Task::none()
+            }
             Interaction::ProcessNewWorkspace => {
+                if !self.workspace_creation_name_text.is_empty() && !self.workspace_creation_id_text.is_empty() {
+                    let crab = self.get_crab().clone();
+                    let workspace = WorkspaceInfo {
+                        project: self.selected_project.clone().unwrap(),
+                        workspace_name: self.workspace_creation_name_text.clone(),
+                        workspace_id: self.workspace_creation_id_text.clone(),
+                        workspace_description: self.workspace_creation_description_text.clone(),
+                    };
+                    return Task::perform(workspace::create_workspace(crab, workspace), |result| {
+                        Interaction::DisplayWorkspacesList
+                    });
+                }
+                Task::none()
+            }
+            Interaction::DisplayWorkspacesList => {
+                self.workspace_creation_name_text = "".to_string();
+                self.workspace_creation_id_text = "".to_string();
+                self.workspace_creation_description_text = "".to_string();
+                self.display = Display::WorkspaceSelection;
                 Task::none()
             }
         }
@@ -337,7 +370,7 @@ impl IllusionnaApp {
                             .push(
                                 Button::new(
                                     Row::new()
-                                        .push(Image::new(&selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(64f32))
+                                        .push(Image::new(&selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(Length::Fixed(64f32)))
                                         .push(
                                             Column::new()
                                                 .push(Text::new(format!("{} - {}", &selected_project.source_owner, &selected_project.fork_name)).size(28))
@@ -378,7 +411,7 @@ impl IllusionnaApp {
                     .push(Container::new(match &self.account {
                         Some(info) => {
                             let content: Row<Interaction> = Row::new()
-                                .push(Image::new(&info.avatar).width(Length::Fixed(48f32)).height(48f32))
+                                .push(Image::new(&info.avatar).width(Length::Fixed(48f32)).height(Length::Fixed(48f32)))
                                 .push(
                                     Column::new()
                                         .push(text(&info.name).size(20))
@@ -431,10 +464,10 @@ impl IllusionnaApp {
                     for i in 0..iterations {
                         let mut row = vec![];
                         let first_info = workspaces.get(i).unwrap();
-                        row.push(display_workspace(first_info.workspace_title.to_string(), first_info.workspace_id.to_string()));
+                        row.push(display_workspace(first_info.workspace_name.to_string(), first_info.workspace_id.to_string()));
                         if i + 1 < workspaces.len() {
                             let second_info = workspaces.get(i + 1).unwrap();
-                            row.push(display_workspace(second_info.workspace_title.to_string(), second_info.workspace_id.to_string()))
+                            row.push(display_workspace(second_info.workspace_name.to_string(), second_info.workspace_id.to_string()))
                         }
                         column.push(Row::new().extend(row.into_iter().map(|x| x.into())).spacing(6));
                     }
@@ -442,12 +475,12 @@ impl IllusionnaApp {
                         let last = workspaces.last().unwrap();
                         column.push(
                             Row::new()
-                                .push(display_workspace(last.workspace_title.to_string(), last.workspace_id.to_string()))
+                                .push(display_workspace(last.workspace_name.to_string(), last.workspace_id.to_string()))
                         );
                     }
                     Column::new()
                         .extend(column.into_iter().map(|x| x.into()))
-                        .width(Length::Fill).align_x(Horizontal::Center)
+                        .spacing(6).width(Length::Fill).align_x(Horizontal::Center)
                 }
                 else {
                     Column::new()
@@ -467,7 +500,7 @@ impl IllusionnaApp {
                 Row::new()
                     .push(
                         Row::new()
-                            .push(Image::new(selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(64f32))
+                            .push(Image::new(selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(Length::Fixed(64f32)))
                             .push(Text::new(selected_project.source_owner).size(28))
                             .spacing(10)
                             .align_y(Vertical::Center)
@@ -484,7 +517,7 @@ impl IllusionnaApp {
                     Row::new()
                         .push(
                             Column::new()
-                                .push(Button::new(Text::new("Return back to Projects List")).style(small_button).on_press(Interaction::DisplayProjectList))
+                                .push(Button::new(Text::new("Return back to Projects List")).style(small_button).on_press(Interaction::DisplayProjectsList))
                                 .width(Length::Fill)
                                 .align_x(Horizontal::Left)
                         )
@@ -507,7 +540,52 @@ impl IllusionnaApp {
     }
 
     fn workspace_creation(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        Text::new("").into()
+        let selected_project = self.selected_project.clone().unwrap();
+        Column::new()
+            .push(
+                Row::new()
+                    .push(Image::new(selected_project.source_owner_icon).width(Length::Fixed(64f32)).height(Length::Fixed(64f32)))
+                    .push(
+                        Column::new()
+                            .push(Text::new("Workspace Creation").size(24))
+                            .push(Text::new(format!("{}/{}", selected_project.source_owner, selected_project.source_name)))
+                    )
+                    .spacing(10)
+                    .align_y(Vertical::Center)
+            )
+            .push(
+                Column::new()
+                    .push(Text::new("Workspace Name"))
+                    .push(TextInput::new("Enter a title", &self.workspace_creation_name_text).width(Length::Fixed(250f32)).on_input(Interaction::WorkspaceNameInput))
+                    .spacing(6)
+            )
+            .push(
+                Column::new()
+                    .push(Text::new("Workspace Id"))
+                    .push(TextInput::new("Only [a-z] & [0-9] & \"-\" & \"/\"", &self.workspace_creation_id_text).width(Length::Fixed(250f32)).on_input(Interaction::WorkspaceIdInput))
+                    .spacing(6)
+            )
+            .push(
+                Column::new()
+                    .push(Text::new("Workspace Description"))
+                    .push(TextInput::new("Optionally write a description", &self.workspace_creation_description_text).width(Length::Fixed(250f32)).on_input(Interaction::WorkspaceDescriptionInput))
+                    .spacing(6)
+            )
+            .push(
+                Button::new(Text::new("Create Workspace"))
+                    .style(small_button)
+                    .on_press(Interaction::ProcessNewWorkspace)
+            )
+            .push(
+                Button::new(Text::new("Back to Workspaces List"))
+                    .style(small_button)
+                    .on_press(Interaction::DisplayWorkspacesList)
+            )
+            .padding(25)
+            .spacing(25)
+            .width(Length::Fill)
+            .align_x(Horizontal::Center)
+            .into()
     }
 
     fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {

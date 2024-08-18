@@ -8,12 +8,12 @@ use octocrab::params::repos::Reference;
 use octocrab::{Octocrab, OctocrabBuilder};
 use reqwest::Url;
 use secrecy::SecretString;
-use serde_json::json;
 use std::convert::Into;
 use std::string::ToString;
 use std::time::Duration;
 use octocrab::models::pulls::PullRequest;
 use octocrab::params::State;
+use serde::{Deserialize, Serialize};
 
 pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
@@ -148,19 +148,20 @@ pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str
     None
 }
 
-pub async fn sync_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> () {
-    let route = format!(
-        "/repos/{owner}/{repo}/merge-upstream",
-        owner = owner,
-        repo = project_name,
-    );
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncResult {
+    pub message: String,
+    pub merge_type: String,
+    pub base_branch: String
+}
+
+pub async fn sync_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> SyncResult {
+    let route = format!("/repos/{}/{}/merge-upstream", owner, project_name);
     crab.post(
         route,
-        Some(&json!({
-            "owner": owner,
-            "repo": project_name,
-            "branch": get_default_branch(crab, owner, project_name).await.unwrap().name
-        })),
+        Some(&serde_json::json!(
+            { "owner": owner, "repo": project_name, "branch": get_default_branch(crab, owner, project_name).await.unwrap().name }
+        ))
     ).await.expect("Syncing did not work correctly")
 }
 
@@ -169,15 +170,19 @@ pub async fn create_branch(crab: &Octocrab, owner: &str, project_name: &str, wor
     crab.repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
 }
 
+pub async fn create_empty_commit(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str) {
+    // TODO: trying get the tree of the current branch to create a commit using it and which no changes; resulting in a hypothetical empty commit
+}
+
 pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, source_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
-    octocrab::instance()
-        .pulls(source_owner, source_name)
+    let draft = !crab.repos(source_owner, source_name).get().await.unwrap().private.unwrap();
+    crab.pulls(source_owner, source_name)
         .create(
             workspace_title,
             fork_owner.to_string() + ":" + workspace_id,
             get_default_branch(crab, source_owner, source_name).await.unwrap().name
         )
         .body(workspace_description)
-        .draft(true)
+        .draft(draft)
         .send().await.unwrap();
 }

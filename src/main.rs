@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 use iced;
 use iced::{Font, Size};
 use crate::app::IllusionnaApp;
@@ -8,7 +8,6 @@ mod workspace;
 mod wrapper;
 
 fn main() -> octocrab::Result<()> {
-    println!("{}", wrapper::ILLUSIONNA_GITHUB_APP);
     iced::application("Illusionna", IllusionnaApp::update, IllusionnaApp::view)
         .window_size(Size::new(854f32, 480f32))
         .resizable(false)
