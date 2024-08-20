@@ -73,7 +73,8 @@ pub async fn get_workspaces(crab: Octocrab, project_info: ProjectInfo, all: bool
 pub async fn create_workspace(crab: Octocrab, info: WorkspaceInfo) {
     wrapper::sync_default_branch(&crab, &info.project.fork_owner, &info.project.fork_name).await;
     wrapper::create_branch(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
-    wrapper::create_empty_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
+    let (branch, commit) = wrapper::create_empty_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await.unwrap();
+    wrapper::push_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id, &branch, &commit).await;
     wrapper::create_draft_pull_request(
         &crab,
         &info.project.source_owner,

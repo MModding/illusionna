@@ -2,7 +2,7 @@ use either::Either;
 use http::header::ACCEPT;
 use iced::widget::image;
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
-use octocrab::models::repos::Branch;
+use octocrab::models::repos::{Branch, CommitObject, Object};
 use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
 use octocrab::{Octocrab, OctocrabBuilder};
@@ -139,7 +139,7 @@ pub async fn get_pull_requests(crab: &Octocrab, owner: &str, project_name: &str,
 
 pub async fn get_default_branch(crab: &Octocrab, owner: &str, project_name: &str) -> Option<Branch> {
     let default_branch = crab.repos(owner, project_name).get().await.unwrap().default_branch?;
-    let branches = crab.repos(owner, project_name).list_branches().send().await.unwrap().items;
+    let branches = crab.repos(owner, project_name).list_branches().per_page(100).send().await.unwrap().items;
     for branch in branches {
         if branch.name == default_branch {
             return Some(branch);
@@ -170,8 +170,36 @@ pub async fn create_branch(crab: &Octocrab, owner: &str, project_name: &str, wor
     crab.repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
 }
 
-pub async fn create_empty_commit(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str) {
-    // TODO: trying get the tree of the current branch to create a commit using it and which no changes; resulting in a hypothetical empty commit
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeObject {
+    sha: String,
+    url: String
+}
+
+pub async fn create_empty_commit(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str) -> Option<(String, String)> {
+    match crab.repos(owner, project_name).get_ref(&Reference::Branch(workspace_id.to_string())).await.unwrap().object {
+        Object::Commit { sha, .. } => {
+            let usable_sha = sha.clone();
+            let commit = crab.repos(owner, project_name).list_commits().sha(sha).per_page(1).send().await.unwrap().items.last()?.clone();
+            Some((
+                usable_sha.clone(),
+                crab.repos(owner, project_name)
+                    .create_git_commit_object(format!("Initialize {}", workspace_id), commit.commit.tree.sha)
+                    .parents(vec![usable_sha])
+                    .send()
+                    .await
+                    .unwrap()
+                    .sha
+            ))
+        }
+        _ => None
+    }
+}
+
+pub async fn push_commit(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str, branch_sha: &str, commit: &str) -> Option<CommitObject> {
+    let route = format!("/repos/{}/{}/git/refs/heads/{}", owner, project_name, workspace_id);
+    crab.post(route, Some(&serde_json::json!({ "ref": branch_sha, "sha": commit, "force": true }))).await.ok()
 }
 
 pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, source_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {

@@ -74,6 +74,7 @@ pub enum Interaction {
     WorkspaceDescriptionInput(String),
     ProcessNewWorkspace,
     DisplayWorkspacesList,
+    AddNewWorkspace(WorkspaceInfo)
 }
 
 pub fn sidebar_button(theme: &Theme, status: Status) -> button::Style {
@@ -298,8 +299,8 @@ impl IllusionnaApp {
                         workspace_id: self.workspace_creation_id_text.clone(),
                         workspace_description: self.workspace_creation_description_text.clone(),
                     };
-                    return Task::perform(workspace::create_workspace(crab, workspace), |result| {
-                        Interaction::DisplayWorkspacesList
+                    return Task::perform(workspace::create_workspace(crab, workspace.clone()), move |result| {
+                        Interaction::AddNewWorkspace((&workspace).clone())
                     });
                 }
                 Task::none()
@@ -310,6 +311,12 @@ impl IllusionnaApp {
                 self.workspace_creation_description_text = "".to_string();
                 self.display = Display::WorkspaceSelection;
                 Task::none()
+            }
+            Interaction::AddNewWorkspace(workspace) => {
+                let mut workspaces = self.workspaces.clone().unwrap();
+                workspaces.insert(0, workspace.clone());
+                self.workspaces = Some(workspaces);
+                Task::done(Interaction::DisplayWorkspacesList)
             }
         }
     }
