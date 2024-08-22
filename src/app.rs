@@ -152,7 +152,7 @@ impl IllusionnaApp {
                 Task::none()
             }
             Interaction::StartDeviceFlow => {
-                Task::perform(wrapper::oauth_process(), |result| {
+                Task::perform(wrapper::embedded_oauth_process(), |result| {
                     return Interaction::CompleteDeviceFlow(result.unwrap());
                 })
             }
@@ -297,7 +297,7 @@ impl IllusionnaApp {
                         project: self.selected_project.clone().unwrap(),
                         workspace_name: self.workspace_creation_name_text.clone(),
                         workspace_id: self.workspace_creation_id_text.clone(),
-                        workspace_description: self.workspace_creation_description_text.clone(),
+                        workspace_description: format!("{}\n\nPowered by [Illusionna](https://mmodding.com/illusionna).", self.workspace_creation_description_text.clone()),
                     };
                     return Task::perform(workspace::create_workspace(crab, workspace.clone()), move |result| {
                         Interaction::AddNewWorkspace((&workspace).clone())

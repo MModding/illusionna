@@ -7,7 +7,7 @@ use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
 use octocrab::{Octocrab, OctocrabBuilder};
 use reqwest::Url;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::convert::Into;
 use std::string::ToString;
 use std::time::Duration;
@@ -17,7 +17,69 @@ use serde::{Deserialize, Serialize};
 
 pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
-pub async fn oauth_process() -> octocrab::Result<Octocrab> {
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OAuthData {
+    pub access_token: String,
+    pub token_type: String,
+    pub scope: Vec<String>,
+    pub expires_in: Option<usize>,
+    pub refresh_token: Option<String>,
+    pub refresh_token_expires_in: Option<usize>,
+}
+
+impl From<OAuth> for OAuthData {
+    fn from(oauth: OAuth) -> Self {
+        OAuthData {
+            access_token: oauth.access_token.expose_secret().to_string(),
+            token_type: oauth.token_type.to_string(),
+            scope: oauth.scope,
+            expires_in: oauth.expires_in,
+            refresh_token: oauth.refresh_token.map(|rtk| rtk.expose_secret().to_string()),
+            refresh_token_expires_in: oauth.refresh_token_expires_in,
+        }
+    }
+}
+
+impl Into<OAuth> for OAuthData {
+    fn into(self) -> OAuth {
+        OAuth {
+            access_token: SecretString::from(self.access_token),
+            token_type: self.token_type,
+            scope: self.scope,
+            expires_in: self.expires_in,
+            refresh_token: self.refresh_token.map(|rtk| SecretString::from(rtk)),
+            refresh_token_expires_in: self.refresh_token_expires_in,
+        }
+    }
+}
+
+pub fn get_stored_token() -> Option<OAuth> {
+    let username = whoami::username();
+    let entry = keyring::Entry::new("illusionna-token-storage", &username).ok()?;
+    let result: Option<OAuthData> = serde_json::from_slice(&entry.get_secret().ok()?).ok();
+    result.map(|data| data.into())
+}
+
+pub fn set_stored_token(oauth: OAuth) -> octocrab::Result<OAuth> {
+    let username = whoami::username();
+    let entry = keyring::Entry::new("illusionna-token-storage", &username).unwrap();
+    entry.set_secret(&serde_json::to_vec(&OAuthData::from(oauth.clone())).unwrap()).unwrap();
+    Ok(oauth)
+}
+
+pub async fn embedded_oauth_process() -> octocrab::Result<Octocrab> {
+    let oauth: OAuth = match get_stored_token() {
+        Some(oauth) => oauth,
+        None => set_stored_token(oauth_process().await?)?
+    };
+    let crab = OctocrabBuilder::oauth(OctocrabBuilder::new(), oauth).build().ok();
+    match crab {
+        Some(x) => Ok(x),
+        None => OctocrabBuilder::oauth(OctocrabBuilder::new(), set_stored_token(oauth_process().await?)?).build()
+    }
+}
+
+pub async fn oauth_process() -> octocrab::Result<OAuth> {
     let crab = Octocrab::builder()
         .base_uri("https://github.com").unwrap()
         .add_header(ACCEPT, "application/json".to_string())
@@ -25,8 +87,7 @@ pub async fn oauth_process() -> octocrab::Result<Octocrab> {
     let codes = start_authorization(&crab).await?;
     webbrowser::open(&codes.verification_uri).expect("...");
     cli_clipboard::set_contents(String::from(&codes.user_code)).expect("...");
-    let oauth = wait_confirm(&crab, codes).await?;
-    OctocrabBuilder::oauth(OctocrabBuilder::new(), oauth).build()
+    wait_confirm(&crab, codes).await
 }
 
 pub async fn start_authorization(crab: &Octocrab) -> octocrab::Result<DeviceCodes> {
