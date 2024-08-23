@@ -1,7 +1,9 @@
-use iced::widget::image;
 use crate::wrapper;
+use iced::futures::StreamExt;
+use iced::widget::image;
 use octocrab;
 use octocrab::Octocrab;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
@@ -84,4 +86,116 @@ pub async fn create_workspace(crab: Octocrab, info: WorkspaceInfo) {
         &info.workspace_id,
         &info.workspace_description
     ).await;
+}
+
+#[derive(Debug, Clone)]
+pub struct PathInfo {
+    pub path: String,
+    pub url: String,
+    pub content: PathContent
+}
+
+#[derive(Debug, Clone)]
+pub enum PathContent {
+    File(FileInfo),
+    Directory(DirectoryInfo)
+}
+
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    pub name: String
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectoryInfo {
+    pub name: String,
+    pub contents: BTreeMap<String, PathInfo>
+}
+
+/// Fills up a provided HashMap recursively to a tree-shape.
+/// Takes in count that the HashMap can be non-empty.
+/// By specifying the path, the url, and the path turned to a vector; this function will check
+/// if the current entry it wants to put in the map is the last string entry of the vector;
+/// if so, it will set its path context information such as path or url.
+/// If it is not the last string entry of the vector; it will instead recursively look up
+/// for its inner content until the primary condition is met to set its tree information.
+fn fill_content(ref_path: String, ref_url: String, ref_name: String, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize) {
+    if i == depth - 1 {
+        let key = remaining.remove(0);
+        let info = PathInfo {
+            path: ref_path,
+            url: ref_url,
+            content: if map.contains_key(&key) {
+                map.remove(&key).unwrap().content
+            } else {
+                PathContent::File(FileInfo { name: ref_name })
+            }
+        };
+        map.insert(key, info);
+    }
+    else {
+        let key = remaining.remove(0);
+        let mut previous: Option<PathInfo> = None;
+        let mut inner: BTreeMap<String, PathInfo> = if map.contains_key(&key) {
+            let value = map.remove(&key).unwrap();
+            previous = Some(value.clone());
+            match value.content {
+                PathContent::File(_) => BTreeMap::new(),
+                PathContent::Directory(info) => info.contents
+            }
+        } else {
+            BTreeMap::new()
+        };
+        fill_content(ref_path, ref_url, ref_name, &mut inner, remaining, i + 1, depth);
+        let directory_content = PathContent::Directory(DirectoryInfo { name: key.clone(), contents: inner });
+        let info = if previous.is_some() {
+            let previous_info = previous.unwrap();
+            PathInfo {
+                path: previous_info.path,
+                url: previous_info.url,
+                content: directory_content
+            }
+        } else {
+            PathInfo {
+                path: "".to_string(),
+                url: "".to_string(),
+                content: directory_content
+            }
+        };
+        map.insert(key, info);
+    }
+}
+
+pub (crate) fn debug_content(structure: &BTreeMap<String, PathInfo>, indentation: usize) {
+    for (key, value) in structure {
+        println!("{}{}: (", " ".repeat(indentation), key);
+        println!("{}  path: {}", " ".repeat(indentation), value.path);
+        println!("{}  url: {}", " ".repeat(indentation), value.url);
+        match &value.content {
+            PathContent::File(info) => {
+                println!("{}  name: {}", " ".repeat(indentation), info.name);
+                println!("{})", " ".repeat(indentation));
+            }
+            PathContent::Directory(info) => {
+                println!("{}  name: {}", " ".repeat(indentation), info.name);
+                println!("{}  contents: (", " ".repeat(indentation));
+                debug_content(&info.contents, indentation + 4);
+                println!("{}  )", " ".repeat(indentation));
+                println!("{})", " ".repeat(indentation));
+            }
+        }
+    }
+}
+
+pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> BTreeMap<String, PathInfo> {
+    let object = wrapper::get_repository_content(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id.split(":").last().unwrap().to_string()).await;
+    let mut structure: BTreeMap<String, PathInfo> = BTreeMap::new();
+    for part in object.tree {
+        let mut vec = part.path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+        let name = (&vec.last().unwrap()).to_string();
+        let len = &vec.len();
+        fill_content(part.path, part.url, name, &mut structure, &mut vec, 0usize, len.clone())
+    }
+    // debug_content(&structure, 0);
+    structure
 }

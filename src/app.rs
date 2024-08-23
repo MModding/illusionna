@@ -1,16 +1,25 @@
-use crate::workspace::{ProjectInfo, WorkspaceInfo};
+use crate::workspace::{PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::button::Status;
 use iced::widget::image::FilterMethod;
-use iced::widget::{button, image, scrollable, text, Button, Checkbox, Column, Container, Image, Row, Text, TextInput};
+use iced::widget::{button, image, scrollable, svg, text, Button, Checkbox, Column, Container, Image, Row, Scrollable, Svg, Text, TextInput};
 use iced::window::icon;
-use iced::{window, Alignment, Background, Border, Color, Degrees, Element, Length, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
+use iced::{window, Alignment, Background, Border, Color, Degrees, Element, Length, Padding, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
 use octocrab::Octocrab;
 use reqwest::Url;
+use std::collections::BTreeMap;
 
+// Illusionna Icons
 const ICON: &[u8] = include_bytes!("../resources/icon.png").as_slice();
+
+// Bootstrap Icons
+const APPEND: &[u8] = include_bytes!("../resources/append.svg").as_slice();
+const EDIT: &[u8] = include_bytes!("../resources/edit.svg").as_slice();
+const REMOVE: &[u8] = include_bytes!("../resources/remove.svg").as_slice();
+const FOLDER: &[u8] = include_bytes!("../resources/folder.svg").as_slice();
+const COLLAPSE: &[u8] = include_bytes!("../resources/collapse.svg").as_slice();
+const EXPAND: &[u8] = include_bytes!("../resources/expand.svg").as_slice();
 
 #[derive(Debug, Clone)]
 enum CrabState {
@@ -49,6 +58,9 @@ pub struct IllusionnaApp {
     workspace_creation_name_text: String,
     workspace_creation_id_text: String,
     workspace_creation_description_text: String,
+    selected_workspace: Option<WorkspaceInfo>,
+    workspace_content: Option<BTreeMap<String, PathInfo>>,
+    modifications: Option<BTreeMap<String, Vec<u8>>>
 }
 
 #[derive(Debug, Clone)]
@@ -74,19 +86,21 @@ pub enum Interaction {
     WorkspaceDescriptionInput(String),
     ProcessNewWorkspace,
     DisplayWorkspacesList,
-    AddNewWorkspace(WorkspaceInfo)
+    AddNewWorkspace(WorkspaceInfo),
+    OpenWorkspace(String),
+    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>)
 }
 
-pub fn sidebar_button(theme: &Theme, status: Status) -> button::Style {
+pub fn sidebar_button(theme: &Theme, status: button::Status) -> button::Style {
     let color;
-    if status == Status::Hovered || status == Status::Pressed {
+    if status == button::Status::Hovered || status == button::Status::Pressed {
         color = Color::from_rgb8(72, 68, 255)
     }
     else {
         if theme.extended_palette().is_dark {
             color = Color::from_rgb8(46, 45, 62);
         } else {
-            color = Color::WHITE;
+            color = Color::from_rgb8(184, 182, 216);
         }
     }
     button::Style {
@@ -97,12 +111,27 @@ pub fn sidebar_button(theme: &Theme, status: Status) -> button::Style {
     }
 }
 
-pub fn large_button(theme: &Theme, status: Status) -> button::Style {
+pub fn large_button(theme: &Theme, status: button::Status) -> button::Style {
     button::Style { border: Border::default().rounded(10), ..sidebar_button(theme, status) }
 }
 
-pub fn small_button(theme: &Theme, status: Status) -> button::Style {
+pub fn small_button(theme: &Theme, status: button::Status) -> button::Style {
     button::Style { border: Border::default().rounded(3), ..large_button(theme, status) }
+}
+
+pub fn default_svg(theme: &Theme, _: svg::Status) -> svg::Style {
+    svg::Style {
+        color: if theme.extended_palette().is_dark { Some(Color::WHITE) } else { Some(Color::BLACK) }
+    }
+}
+
+pub fn advanced_svg(color: Color, theme: &Theme, status: svg::Status) -> svg::Style {
+    if status == svg::Status::Hovered {
+        svg::Style { color: Some(color) }
+    }
+    else {
+        default_svg(theme, status)
+    }
 }
 
 impl IllusionnaApp {
@@ -124,7 +153,10 @@ impl IllusionnaApp {
                 show_closed: false,
                 workspace_creation_name_text: "".to_string(),
                 workspace_creation_id_text: "".to_string(),
-                workspace_creation_description_text: "".to_string()
+                workspace_creation_description_text: "".to_string(),
+                selected_workspace: None,
+                workspace_content: None,
+                modifications: None
             },
             icon_task
         )
@@ -318,6 +350,21 @@ impl IllusionnaApp {
                 self.workspaces = Some(workspaces);
                 Task::done(Interaction::DisplayWorkspacesList)
             }
+            Interaction::OpenWorkspace(workspace_id) => {
+                let crab = self.get_crab().clone();
+                for x in self.workspaces.clone().unwrap() {
+                    if x.workspace_id == workspace_id {
+                        self.selected_workspace = Some(x.clone());
+                        return Task::perform(workspace::get_workspace_content(crab.clone(), x), Interaction::ReceiveWorkspaceContent);
+                    }
+                }
+                Task::none()
+            }
+            Interaction::ReceiveWorkspaceContent(content) => {
+                self.display = Display::WorkspaceContent;
+                self.workspace_content = Some(content);
+                Task::none()
+            }
         }
     }
 
@@ -457,10 +504,10 @@ impl IllusionnaApp {
                 Container::new(
                     Column::new()
                         .push(Text::new(title).size(16))
-                        .push(Text::new(id).size(12))
+                        .push(Text::new(id.clone()).size(12))
                         .spacing(6)
                 ).padding(6).width(Length::Fixed(320f32)).height(Length::Fixed(96f32))
-            ).style(large_button)
+            ).style(large_button).on_press(Interaction::OpenWorkspace(id))
         }
         let selected_project = self.selected_project.clone().unwrap();
         let workspaces_widget = match &self.workspaces {
@@ -596,6 +643,37 @@ impl IllusionnaApp {
     }
 
     fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        Text::new("").into()
+        fn display_content<'a>(structure: &'a BTreeMap<String, PathInfo>, indentation: f32, vec: &mut Vec<Element<'a, Interaction>>) {
+            for (_, value) in structure {
+                match &value.content {
+                    PathContent::File(info) => {
+                        let file = Button::new(Text::new(&info.name)).width(Length::Fill).style(small_button);
+                        vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+                    }
+                    PathContent::Directory(info) => {
+                        let directory = Button::new(
+                            Row::new()
+                                .push(Svg::new(svg::Handle::from_memory(COLLAPSE)).width(Length::Fixed(24f32)).style(default_svg))
+                                .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(24f32)).style(default_svg))
+                                .push(Text::new(&info.name))
+                                .spacing(2.5)
+                                .align_y(Vertical::Center)
+                        ).width(Length::Fill).style(small_button);
+                        let mut inner = vec![];
+                        display_content(&info.contents, indentation + 15.0, &mut inner);
+                        vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+                        vec.push(Column::new().extend(inner).into());
+                    }
+                }
+            }
+        }
+        match &self.workspace_content {
+            Some(workspace_content) => {
+                let mut root = vec![];
+                display_content(workspace_content, 0.0, &mut root);
+                Scrollable::new(Column::new().extend(root).padding(10)).width(Length::Fixed(374f32)).into()
+            }
+            None => Column::new().into()
+        }
     }
 }

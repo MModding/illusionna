@@ -153,24 +153,6 @@ pub async fn repository_exists(crab: Octocrab, author: String, project: String) 
     crab.repos(author, project).get().await.is_ok()
 }
 
-/* pub struct PullRequestDisplay {
-    title: String,
-    body: String,
-    author_avatar_url: String
-}
-
-pub async fn get_pulls(owner: &str, repository: &str) -> Result<Vec<PullRequestDisplay>, Error> {
-    let pull_requests = octocrab::instance().pulls(owner, repository).list().send().await?;
-    let mut vec = Vec::new();
-    for pull_request in pull_requests {
-        let title = pull_request.title.unwrap_or("Empty Title".to_string());
-        let body = pull_request.body.unwrap_or("Empty Body".to_string());
-        let author_avatar_url = pull_request.user.unwrap().avatar_url;
-        vec.push(PullRequestDisplay { title, body, author_avatar_url: String::from(author_avatar_url) });
-    }
-    Ok(vec)
-} */
-
 pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
     let forks = crab.repos(source_owner, project_name).list_forks().send().await.unwrap().items;
     for fork in forks {
@@ -231,13 +213,6 @@ pub async fn create_branch(crab: &Octocrab, owner: &str, project_name: &str, wor
     crab.repos(owner, project_name).create_ref(&Reference::Branch(workspace_id.to_string()), branch.commit.sha).await.unwrap();
 }
 
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TreeObject {
-    sha: String,
-    url: String
-}
-
 pub async fn create_empty_commit(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str) -> Option<(String, String)> {
     match crab.repos(owner, project_name).get_ref(&Reference::Branch(workspace_id.to_string())).await.unwrap().object {
         Object::Commit { sha, .. } => {
@@ -274,4 +249,23 @@ pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork
         .body(workspace_description)
         .draft(draft)
         .send().await.unwrap();
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TreeObject {
+    pub sha: String,
+    pub url: String,
+    pub tree: Vec<TreePart>
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TreePart {
+    pub sha: String,
+    pub url: String,
+    pub path: String
+}
+
+pub async fn get_repository_content(crab: &Octocrab, owner: &str, project_name: &str, branch: &str) -> TreeObject {
+    let route = format!("/repos/{}/{}/git/trees/{}", owner, project_name, branch);
+    crab.get(route, Some(&serde_json::json!({ "recursive": true }))).await.unwrap()
 }
