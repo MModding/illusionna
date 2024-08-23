@@ -17,3 +17,7 @@ reqwest = "0.12.5"
 serde = { version = "1.0.205", features = ["derive"] }
 keyring = { version = "3.2.0", features = ["windows-native", "apple-native", "linux-native"] }
 whoami = "1.5.1"
+
+[build-dependencies]
+ico = "0.3.0"
+winresource = "0.1.17"
