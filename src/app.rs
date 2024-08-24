@@ -60,6 +60,7 @@ pub struct IllusionnaApp {
     workspace_creation_description_text: String,
     selected_workspace: Option<WorkspaceInfo>,
     workspace_content: Option<BTreeMap<String, PathInfo>>,
+    collapsed_directories: Vec<String>,
     modifications: Option<BTreeMap<String, Vec<u8>>>
 }
 
@@ -88,7 +89,9 @@ pub enum Interaction {
     DisplayWorkspacesList,
     AddNewWorkspace(WorkspaceInfo),
     OpenWorkspace(String),
-    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>)
+    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>),
+    CollapseDirectory(String),
+    ExpandDirectory(String)
 }
 
 pub fn sidebar_button(theme: &Theme, status: button::Status) -> button::Style {
@@ -156,6 +159,7 @@ impl IllusionnaApp {
                 workspace_creation_description_text: "".to_string(),
                 selected_workspace: None,
                 workspace_content: None,
+                collapsed_directories: vec![],
                 modifications: None
             },
             icon_task
@@ -363,6 +367,18 @@ impl IllusionnaApp {
             Interaction::ReceiveWorkspaceContent(content) => {
                 self.display = Display::WorkspaceContent;
                 self.workspace_content = Some(content);
+                Task::none()
+            }
+            Interaction::CollapseDirectory(path) => {
+                let mut vec = self.collapsed_directories.clone();
+                vec.push(path);
+                self.collapsed_directories = vec;
+                Task::none()
+            }
+            Interaction::ExpandDirectory(path) => {
+                let mut vec = self.collapsed_directories.clone();
+                vec.retain(|x| x != &path);
+                self.collapsed_directories = vec;
                 Task::none()
             }
         }
@@ -642,35 +658,50 @@ impl IllusionnaApp {
             .into()
     }
 
-    fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {
-        fn display_content<'a>(structure: &'a BTreeMap<String, PathInfo>, indentation: f32, vec: &mut Vec<Element<'a, Interaction>>) {
-            for (_, value) in structure {
-                match &value.content {
-                    PathContent::File(info) => {
-                        let file = Button::new(Text::new(&info.name)).width(Length::Fill).style(small_button);
-                        vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+    fn display_content<'a>(&self, structure: &'a BTreeMap<String, PathInfo>, indentation: f32, vec: &mut Vec<Element<'a, Interaction>>) {
+        for (_, value) in structure {
+            match &value.content {
+                PathContent::File(info) => {
+                    let file = Button::new(Text::new(&info.name)).width(Length::Fill).style(small_button);
+                    vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+                }
+                PathContent::Directory(info) => {
+                    let cds = self.collapsed_directories.clone();
+                    let management_button = if cds.contains(&value.path) {
+                        Button::new(Svg::new(svg::Handle::from_memory(EXPAND)).width(Length::Fixed(16f32)).style(default_svg))
+                            .padding(3)
+                            .style(small_button)
+                            .on_press(Interaction::ExpandDirectory(value.path.to_string()))
+                    } else {
+                        Button::new(Svg::new(svg::Handle::from_memory(COLLAPSE)).width(Length::Fixed(16f32)).style(default_svg))
+                            .padding(3)
+                            .style(small_button)
+                            .on_press(Interaction::CollapseDirectory(value.path.to_string()))
+                    };
+                    let directory = Button::new(
+                        Row::new()
+                            .push(management_button)
+                            .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
+                            .push(Text::new(&info.name))
+                            .spacing(2.5)
+                            .align_y(Vertical::Center)
+                    ).width(Length::Fill).padding(3).style(small_button);
+                    let mut inner = vec![];
+                    if !cds.contains(&value.path) {
+                        self.display_content(&info.contents, indentation + 15.0, &mut inner);
                     }
-                    PathContent::Directory(info) => {
-                        let directory = Button::new(
-                            Row::new()
-                                .push(Svg::new(svg::Handle::from_memory(COLLAPSE)).width(Length::Fixed(24f32)).style(default_svg))
-                                .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(24f32)).style(default_svg))
-                                .push(Text::new(&info.name))
-                                .spacing(2.5)
-                                .align_y(Vertical::Center)
-                        ).width(Length::Fill).style(small_button);
-                        let mut inner = vec![];
-                        display_content(&info.contents, indentation + 15.0, &mut inner);
-                        vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
-                        vec.push(Column::new().extend(inner).into());
-                    }
+                    vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+                    vec.push(Column::new().extend(inner).into());
                 }
             }
         }
+    }
+
+    fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {
         match &self.workspace_content {
             Some(workspace_content) => {
                 let mut root = vec![];
-                display_content(workspace_content, 0.0, &mut root);
+                self.display_content(workspace_content, 0.0, &mut root);
                 Scrollable::new(Column::new().extend(root).padding(10)).width(Length::Fixed(374f32)).into()
             }
             None => Column::new().into()
