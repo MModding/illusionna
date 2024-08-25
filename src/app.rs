@@ -5,7 +5,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::image::FilterMethod;
 use iced::widget::{button, image, scrollable, svg, text, Button, Checkbox, Column, Container, Image, Row, Scrollable, Svg, Text, TextInput};
 use iced::window::icon;
-use iced::{window, Alignment, Background, Border, Color, Degrees, Element, Length, Padding, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
+use iced::{widget, window, Alignment, Background, Border, Color, Degrees, Element, Length, Padding, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
 use octocrab::Octocrab;
 use reqwest::Url;
 use std::collections::BTreeMap;
@@ -15,7 +15,8 @@ const ICON: &[u8] = include_bytes!("../resources/icon.png").as_slice();
 
 // Bootstrap Icons
 const APPEND: &[u8] = include_bytes!("../resources/append.svg").as_slice();
-const EDIT: &[u8] = include_bytes!("../resources/edit.svg").as_slice();
+const REPLACE: &[u8] = include_bytes!("../resources/replace.svg").as_slice();
+const RENAME: &[u8] = include_bytes!("../resources/rename.svg").as_slice();
 const REMOVE: &[u8] = include_bytes!("../resources/remove.svg").as_slice();
 const FOLDER: &[u8] = include_bytes!("../resources/folder.svg").as_slice();
 const COLLAPSE: &[u8] = include_bytes!("../resources/collapse.svg").as_slice();
@@ -660,9 +661,30 @@ impl IllusionnaApp {
 
     fn display_content<'a>(&self, structure: &'a BTreeMap<String, PathInfo>, indentation: f32, vec: &mut Vec<Element<'a, Interaction>>) {
         for (_, value) in structure {
+            let modifier = Button::new(
+                Svg::new(svg::Handle::from_memory(if matches!(&value.content, PathContent::Directory(_)) { APPEND } else { REPLACE })).width(Length::Fixed(16f32))
+                    .style(|t, s| advanced_svg(Color::from_rgb8(0, 125, 125), t, s))
+            ).style(small_button);
+            let rename = Button::new(
+                Svg::new(svg::Handle::from_memory(RENAME)).width(Length::Fixed(16f32))
+                    .style(|t, s| advanced_svg(Color::from_rgb8(0, 255, 0), t, s))
+            ).style(small_button);
+            let remove = Button::new(
+                Svg::new(svg::Handle::from_memory(REMOVE)).width(Length::Fixed(16f32))
+                    .style(|t, s| advanced_svg(Color::from_rgb8(255, 0, 0), t, s))
+            ).style(small_button);
+            let operations = Container::new(
+                Row::new()
+                    .push(modifier).push(rename).push(remove)
+                    .spacing(2.5)
+                    .align_y(Vertical::Center)
+            ).padding(Padding::new(0.0).right(2.5)).align_right(Length::Fill);
             match &value.content {
                 PathContent::File(info) => {
-                    let file = Button::new(Text::new(&info.name)).width(Length::Fill).style(small_button);
+                    let file = widget::hover(
+                        Button::new(Text::new(&info.name)).padding(Padding::new(3.0).left(9.0)).width(Length::Fill).style(small_button),
+                        operations
+                    );
                     vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
                 }
                 PathContent::Directory(info) => {
@@ -678,14 +700,17 @@ impl IllusionnaApp {
                             .style(small_button)
                             .on_press(Interaction::CollapseDirectory(value.path.to_string()))
                     };
-                    let directory = Button::new(
-                        Row::new()
-                            .push(management_button)
-                            .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
-                            .push(Text::new(&info.name))
-                            .spacing(2.5)
-                            .align_y(Vertical::Center)
-                    ).width(Length::Fill).padding(3).style(small_button);
+                    let directory = widget::hover(
+                        Button::new(
+                            Row::new()
+                                .push(management_button)
+                                .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
+                                .push(Text::new(&info.name))
+                                .spacing(2.5)
+                                .align_y(Vertical::Center)
+                        ).width(Length::Fill).padding(3.0).style(small_button),
+                        operations
+                    );
                     let mut inner = vec![];
                     if !cds.contains(&value.path) {
                         self.display_content(&info.contents, indentation + 15.0, &mut inner);
