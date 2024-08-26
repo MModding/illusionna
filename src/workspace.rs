@@ -1,9 +1,8 @@
 use crate::wrapper;
-use iced::futures::StreamExt;
 use iced::widget::image;
 use octocrab;
 use octocrab::Octocrab;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
@@ -90,6 +89,7 @@ pub async fn create_workspace(crab: Octocrab, info: WorkspaceInfo) {
 
 #[derive(Debug, Clone)]
 pub struct PathInfo {
+    pub sha: String,
     pub path: String,
     pub url: String,
     pub content: PathContent
@@ -119,10 +119,11 @@ pub struct DirectoryInfo {
 /// if so, it will set its path context information such as path or url.
 /// If it is not the last string entry of the vector; it will instead recursively look up
 /// for its inner content until the primary condition is met to set its tree information.
-fn fill_content(ref_path: String, ref_url: String, ref_name: String, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize) {
+fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: String, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize) {
     if i == depth - 1 {
         let key = remaining.remove(0);
         let info = PathInfo {
+            sha: ref_sha,
             path: ref_path,
             url: ref_url,
             content: if map.contains_key(&key) {
@@ -146,17 +147,19 @@ fn fill_content(ref_path: String, ref_url: String, ref_name: String, map: &mut B
         } else {
             BTreeMap::new()
         };
-        fill_content(ref_path, ref_url, ref_name, &mut inner, remaining, i + 1, depth);
+        fill_content(ref_sha, ref_path, ref_url, ref_name, &mut inner, remaining, i + 1, depth);
         let directory_content = PathContent::Directory(DirectoryInfo { name: key.clone(), contents: inner });
         let info = if previous.is_some() {
             let previous_info = previous.unwrap();
             PathInfo {
+                sha: previous_info.sha,
                 path: previous_info.path,
                 url: previous_info.url,
                 content: directory_content
             }
         } else {
             PathInfo {
+                sha: "".to_string(),
                 path: "".to_string(),
                 url: "".to_string(),
                 content: directory_content
@@ -194,8 +197,36 @@ pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> BTree
         let mut vec = part.path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
         let name = (&vec.last().unwrap()).to_string();
         let len = &vec.len();
-        fill_content(part.path, part.url, name, &mut structure, &mut vec, 0usize, len.clone())
+        fill_content(part.sha, part.path, part.url, name, &mut structure, &mut vec, 0usize, len.clone())
     }
     // debug_content(&structure, 0);
     structure
+}
+
+pub async fn import_files(is_inside_directory: bool, import_location_path: String) -> HashMap<String, Vec<u8>> {
+    let dialog = rfd::AsyncFileDialog::new();
+    let files: Vec<rfd::FileHandle> = if is_inside_directory {
+        dialog.pick_files().await.unwrap_or(vec![])
+    } else {
+        let file = dialog.pick_file().await;
+        if file.is_some() { vec![file.unwrap()] } else { vec![] }
+    };
+    let mut map = HashMap::new();
+    for file in files {
+        map.insert(if is_inside_directory { format!("{}/{}", import_location_path, file.file_name()) } else { import_location_path.to_string() }, file.read().await);
+    }
+    map
+}
+
+pub fn append_workspace_content(content: &mut BTreeMap<String, PathInfo>, paths: Vec<String>) {
+    for path in paths {
+        let mut vec = path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+        let name = (&vec.last().unwrap()).to_string();
+        let len = &vec.len();
+        fill_content("".to_string(), path, "".to_string(), name, content, &mut vec, 0usize, len.clone())
+    }
+}
+
+pub async fn view_workspace_file(crab: Octocrab, info: WorkspaceInfo, file_sha: String) -> Vec<u8> {
+    wrapper::get_decoded_blob(&crab, &info.project.fork_owner, &info.project.fork_name, &file_sha).await.unwrap()
 }

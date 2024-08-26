@@ -1,19 +1,20 @@
+use base64::{DecodeError, Engine};
 use either::Either;
 use http::header::ACCEPT;
 use iced::widget::image;
 use octocrab::auth::{Continue, DeviceCodes, OAuth};
+use octocrab::models::pulls::PullRequest;
 use octocrab::models::repos::{Branch, CommitObject, Object};
 use octocrab::models::Repository;
 use octocrab::params::repos::Reference;
+use octocrab::params::State;
 use octocrab::{Octocrab, OctocrabBuilder};
 use reqwest::Url;
 use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Serialize};
 use std::convert::Into;
 use std::string::ToString;
 use std::time::Duration;
-use octocrab::models::pulls::PullRequest;
-use octocrab::params::State;
-use serde::{Deserialize, Serialize};
 
 pub (crate) const ILLUSIONNA_GITHUB_APP: &str = env!("ILLUSIONNA_GITHUB_APP");
 
@@ -268,4 +269,16 @@ pub struct TreePart {
 pub async fn get_repository_content(crab: &Octocrab, owner: &str, project_name: &str, branch: &str) -> TreeObject {
     let route = format!("/repos/{}/{}/git/trees/{}", owner, project_name, branch);
     crab.get(route, Some(&serde_json::json!({ "recursive": true }))).await.unwrap()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BlobObject {
+    pub content: String
+}
+
+pub async fn get_decoded_blob(crab: &Octocrab, owner: &str, project_name: &str, file_sha: &str) -> Result<Vec<u8>, DecodeError> {
+    let route = format!("/repos/{}/{}/git/blobs/{}", owner, project_name, file_sha);
+    let blob: BlobObject = crab.get(route, Some(&serde_json::json!({}))).await.unwrap();
+    let content = blob.content.as_bytes().to_vec().into_iter().filter(|b| !b" \n\t\r\x0b\x0c".contains(b)).collect::<Vec<u8>>();
+    base64::prelude::BASE64_STANDARD.decode(content)
 }

@@ -2,13 +2,15 @@ use crate::workspace::{PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::image::FilterMethod;
-use iced::widget::{button, image, scrollable, svg, text, Button, Checkbox, Column, Container, Image, Row, Scrollable, Svg, Text, TextInput};
+use iced::widget::image::{FilterMethod, Viewer};
+use iced::widget::{button, image, markdown, scrollable, svg, text, Button, Checkbox, Column, Container, Image, Row, Scrollable, Svg, Text, TextInput};
 use iced::window::icon;
 use iced::{widget, window, Alignment, Background, Border, Color, Degrees, Element, Length, Padding, Radians, Renderer, Rotation, Shadow, Subscription, Task, Theme};
 use octocrab::Octocrab;
 use reqwest::Url;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use iced::futures::FutureExt;
+use iced::theme::Palette;
 
 // Illusionna Icons
 const ICON: &[u8] = include_bytes!("../resources/icon.png").as_slice();
@@ -45,6 +47,12 @@ pub enum ReferenceValidation {
 }
 
 #[derive(Debug, Clone)]
+pub enum Change {
+    AssignContent(Vec<u8>),
+    EraseContent
+}
+
+#[derive(Debug, Clone)]
 pub struct IllusionnaApp {
     rotator: u16,
     crab: CrabState,
@@ -62,7 +70,10 @@ pub struct IllusionnaApp {
     selected_workspace: Option<WorkspaceInfo>,
     workspace_content: Option<BTreeMap<String, PathInfo>>,
     collapsed_directories: Vec<String>,
-    modifications: Option<BTreeMap<String, Vec<u8>>>
+    viewed_file_path: Option<String>,
+    viewed_file_name: Option<String>,
+    viewed_file_content: Option<Vec<u8>>,
+    modification: HashMap<String, Change>
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +87,7 @@ pub enum Interaction {
     ProcessProjectReference(String),
     ValidateProjectReference(ReferenceValidation),
     CreateProject,
-    OpenAccountProfile(Url),
+    OpenLink(Url),
     OpenSelectedProject,
     AppendCreatedProject(ProjectInfo),
     ReceiveWorkspaceInfos(Vec<WorkspaceInfo>),
@@ -92,7 +103,11 @@ pub enum Interaction {
     OpenWorkspace(String),
     ReceiveWorkspaceContent(BTreeMap<String, PathInfo>),
     CollapseDirectory(String),
-    ExpandDirectory(String)
+    ExpandDirectory(String),
+    ViewFile(String, String),
+    ProcessViewingContent(Vec<u8>),
+    SelectFiles(bool, String),
+    SetFiles(HashMap<String, Vec<u8>>)
 }
 
 pub fn sidebar_button(theme: &Theme, status: button::Status) -> button::Style {
@@ -161,7 +176,10 @@ impl IllusionnaApp {
                 selected_workspace: None,
                 workspace_content: None,
                 collapsed_directories: vec![],
-                modifications: None
+                viewed_file_path: None,
+                viewed_file_name: None,
+                viewed_file_content: None,
+                modification: HashMap::new()
             },
             icon_task
         )
@@ -271,7 +289,7 @@ impl IllusionnaApp {
                     _ => Task::none()
                 }
             }
-            Interaction::OpenAccountProfile(url) => {
+            Interaction::OpenLink(url) => {
                 webbrowser::open(url.as_str()).unwrap();
                 Task::none()
             }
@@ -380,6 +398,37 @@ impl IllusionnaApp {
                 let mut vec = self.collapsed_directories.clone();
                 vec.retain(|x| x != &path);
                 self.collapsed_directories = vec;
+                Task::none()
+            }
+            Interaction::ViewFile(sha, path) => {
+                self.viewed_file_path = Some(path.clone());
+                self.viewed_file_name = Some(path.split("/").last().unwrap().to_string());
+                self.viewed_file_content = None;
+                if self.modification.contains_key(&path) {
+                    let value = self.modification.get(&path).unwrap();
+                    if matches!(value, Change::AssignContent(_)) {
+                        let Change::AssignContent(bytes) = value else { panic!() };
+                        return Task::done(Interaction::ProcessViewingContent(bytes.clone()));
+                    }
+                }
+                let crab = self.get_crab().clone();
+                let workspace = self.selected_workspace.clone().unwrap();
+                Task::perform(workspace::view_workspace_file(crab, workspace, sha), Interaction::ProcessViewingContent)
+            }
+            Interaction::ProcessViewingContent(bytes) => {
+                self.viewed_file_content = Some(bytes);
+                Task::none()
+            }
+            Interaction::SelectFiles(is_inside_dir, import_location_path) => {
+                Task::perform(workspace::import_files(is_inside_dir, import_location_path), Interaction::SetFiles)
+            }
+            Interaction::SetFiles(files) => {
+                let Some(mut content) = self.workspace_content.clone() else { panic!() };
+                workspace::append_workspace_content(&mut content, files.keys().map(|x| x.to_string()).collect());
+                self.workspace_content = Some(content);
+                for file in files {
+                    self.modification.insert(file.0, Change::AssignContent(file.1));
+                }
                 Task::none()
             }
         }
@@ -495,7 +544,7 @@ impl IllusionnaApp {
                                 .width(Length::Fixed(256f32))
                                 .padding(10)
                                 .style(large_button)
-                                .on_press(Interaction::OpenAccountProfile(info.clone().profile));
+                                .on_press(Interaction::OpenLink(info.clone().profile));
                             Column::new().push(button)
                         }
                         None => Column::new()
@@ -661,10 +710,11 @@ impl IllusionnaApp {
 
     fn display_content<'a>(&self, structure: &'a BTreeMap<String, PathInfo>, indentation: f32, vec: &mut Vec<Element<'a, Interaction>>) {
         for (_, value) in structure {
+            let is_dir = matches!(&value.content, PathContent::Directory(_));
             let modifier = Button::new(
-                Svg::new(svg::Handle::from_memory(if matches!(&value.content, PathContent::Directory(_)) { APPEND } else { REPLACE })).width(Length::Fixed(16f32))
+                Svg::new(svg::Handle::from_memory(if is_dir { APPEND } else { REPLACE })).width(Length::Fixed(16f32))
                     .style(|t, s| advanced_svg(Color::from_rgb8(0, 125, 125), t, s))
-            ).style(small_button);
+            ).style(small_button).on_press(Interaction::SelectFiles(is_dir, value.path.clone()));
             let rename = Button::new(
                 Svg::new(svg::Handle::from_memory(RENAME)).width(Length::Fixed(16f32))
                     .style(|t, s| advanced_svg(Color::from_rgb8(0, 255, 0), t, s))
@@ -682,7 +732,11 @@ impl IllusionnaApp {
             match &value.content {
                 PathContent::File(info) => {
                     let file = widget::hover(
-                        Button::new(Text::new(&info.name)).padding(Padding::new(3.0).left(9.0)).width(Length::Fill).style(small_button),
+                        Button::new(Text::new(&info.name))
+                            .padding(Padding::new(3.0).left(9.0))
+                            .width(Length::Fill)
+                            .style(small_button)
+                            .on_press(Interaction::ViewFile((&value.sha).to_string(), (&value).path.to_string())),
                         operations
                     );
                     vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
@@ -727,9 +781,32 @@ impl IllusionnaApp {
             Some(workspace_content) => {
                 let mut root = vec![];
                 self.display_content(workspace_content, 0.0, &mut root);
-                Scrollable::new(Column::new().extend(root).padding(10)).width(Length::Fixed(374f32)).into()
+                let scroll = Scrollable::new(Column::new().extend(root).padding(10)).width(Length::Fixed(374f32));
+                let mut content: Vec<Element<Interaction, Theme, Renderer>> = vec![scroll.into()];
+                let o_view = self.viewed_file_content.clone();
+                if matches!(o_view, Some(_)) {
+                    let name = self.viewed_file_name.clone().unwrap();
+                    if name.ends_with("png") || name.ends_with("jpg") || name.ends_with("jpeg") {
+                        content.push(
+                            Container::new(
+                                Viewer::new(image::Handle::from_bytes(o_view.unwrap()))
+                                    .width(Length::Fixed(400f32))
+                                    .height(Length::Fixed(400f32))
+                                    .filter_method(FilterMethod::Nearest)
+                                    .scale_step(0.5)
+                            ).center(Length::Fill).into()
+                        )
+                    }
+                    else if name.ends_with("md") {
+                        let value = String::from_utf8(o_view.unwrap()).unwrap();
+                        let items = markdown::parse(&value, Palette::DARK).map(|x| &*Box::leak(Box::new(x)));
+                        let display: Element<Interaction, Theme, Renderer> = widget::markdown(items, markdown::Settings::default()).map(Interaction::OpenLink);
+                        content.push(Container::new(Scrollable::new(display).spacing(10)).width(Length::Fixed(500f32)).padding(25).into())
+                    }
+                }
+                Row::new().extend(content).into()
             }
-            None => Column::new().into()
+            None => Row::new().into()
         }
     }
 }
