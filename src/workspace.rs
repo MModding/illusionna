@@ -112,6 +112,27 @@ pub struct DirectoryInfo {
     pub contents: BTreeMap<String, PathInfo>
 }
 
+impl PathInfo {
+    pub fn contains(&self, string: &str) -> bool {
+        let lowercase_path = self.path.to_lowercase();
+        let lowercase_string = string.to_lowercase();
+        match &self.content {
+            PathContent::Directory(directory) => {
+                if lowercase_path.contains(&lowercase_string) {
+                    return true;
+                }
+                for info in directory.contents.values() {
+                    if info.contains(string) {
+                        return true;
+                    }
+                }
+                false
+            }
+            PathContent::File(_) => lowercase_path.contains(&lowercase_string)
+        }
+    }
+}
+
 /// Fills up a provided HashMap recursively to a tree-shape.
 /// Takes in count that the HashMap can be non-empty.
 /// By specifying the path, the url, and the path turned to a vector; this function will check
@@ -213,7 +234,12 @@ pub async fn import_files(is_inside_directory: bool, import_location_path: Strin
     };
     let mut map = HashMap::new();
     for file in files {
-        map.insert(if is_inside_directory { format!("{}/{}", import_location_path, file.file_name()) } else { import_location_path.to_string() }, file.read().await);
+        let name = if is_inside_directory {
+            if !import_location_path.is_empty() { format!("{}/{}", import_location_path, file.file_name()) } else { file.file_name() }
+        } else {
+            import_location_path.to_string()
+        };
+        map.insert(name, file.read().await);
     }
     map
 }

@@ -9,13 +9,13 @@ use iced::{widget, window, Alignment, Background, Border, Color, Degrees, Elemen
 use octocrab::Octocrab;
 use reqwest::Url;
 use std::collections::{BTreeMap, HashMap};
-use iced::futures::FutureExt;
 use iced::theme::Palette;
 
 // Illusionna Icons
 const ICON: &[u8] = include_bytes!("../resources/icon.png").as_slice();
 
 // Bootstrap Icons
+const REPOSITORY: &[u8] = include_bytes!("../resources/repository.svg").as_slice();
 const APPEND: &[u8] = include_bytes!("../resources/append.svg").as_slice();
 const REPLACE: &[u8] = include_bytes!("../resources/replace.svg").as_slice();
 const RENAME: &[u8] = include_bytes!("../resources/rename.svg").as_slice();
@@ -69,6 +69,7 @@ pub struct IllusionnaApp {
     workspace_creation_description_text: String,
     selected_workspace: Option<WorkspaceInfo>,
     workspace_content: Option<BTreeMap<String, PathInfo>>,
+    workspace_content_filter: String,
     collapsed_directories: Vec<String>,
     viewed_file_path: Option<String>,
     viewed_file_name: Option<String>,
@@ -102,6 +103,7 @@ pub enum Interaction {
     AddNewWorkspace(WorkspaceInfo),
     OpenWorkspace(String),
     ReceiveWorkspaceContent(BTreeMap<String, PathInfo>),
+    FilterWorkspaceContent(String),
     CollapseDirectory(String),
     ExpandDirectory(String),
     ViewFile(String, String),
@@ -175,6 +177,7 @@ impl IllusionnaApp {
                 workspace_creation_description_text: "".to_string(),
                 selected_workspace: None,
                 workspace_content: None,
+                workspace_content_filter: "".to_string(),
                 collapsed_directories: vec![],
                 viewed_file_path: None,
                 viewed_file_name: None,
@@ -186,7 +189,7 @@ impl IllusionnaApp {
     }
 
     pub fn ticker(&self) -> Subscription<Interaction> {
-        window::frames().map(|x| Interaction::Tick)
+        window::frames().map(|_| Interaction::Tick)
     }
 
     pub fn get_crab(&self) -> &Octocrab {
@@ -354,7 +357,7 @@ impl IllusionnaApp {
                         workspace_id: self.workspace_creation_id_text.clone(),
                         workspace_description: format!("{}\n\nPowered by [Illusionna](https://mmodding.com/illusionna).", self.workspace_creation_description_text.clone()),
                     };
-                    return Task::perform(workspace::create_workspace(crab, workspace.clone()), move |result| {
+                    return Task::perform(workspace::create_workspace(crab, workspace.clone()), move |_| {
                         Interaction::AddNewWorkspace((&workspace).clone())
                     });
                 }
@@ -364,6 +367,13 @@ impl IllusionnaApp {
                 self.workspace_creation_name_text = "".to_string();
                 self.workspace_creation_id_text = "".to_string();
                 self.workspace_creation_description_text = "".to_string();
+                self.workspace_content = None;
+                self.workspace_content_filter = "".to_string();
+                self.collapsed_directories.clear();
+                self.viewed_file_name = None;
+                self.viewed_file_path = None;
+                self.viewed_file_content = None;
+                self.modification.clear();
                 self.display = Display::WorkspaceSelection;
                 Task::none()
             }
@@ -386,6 +396,10 @@ impl IllusionnaApp {
             Interaction::ReceiveWorkspaceContent(content) => {
                 self.display = Display::WorkspaceContent;
                 self.workspace_content = Some(content);
+                Task::none()
+            }
+            Interaction::FilterWorkspaceContent(input) => {
+                self.workspace_content_filter = input;
                 Task::none()
             }
             Interaction::CollapseDirectory(path) => {
@@ -728,7 +742,7 @@ impl IllusionnaApp {
                     .push(modifier).push(rename).push(remove)
                     .spacing(2.5)
                     .align_y(Vertical::Center)
-            ).padding(Padding::new(0.0).right(2.5)).align_right(Length::Fill);
+            ).padding(Padding::new(0.0).right(2.5)).center_y(Length::Fill).align_right(Length::Fill);
             match &value.content {
                 PathContent::File(info) => {
                     let file = widget::hover(
@@ -739,7 +753,9 @@ impl IllusionnaApp {
                             .on_press(Interaction::ViewFile((&value.sha).to_string(), (&value).path.to_string())),
                         operations
                     );
-                    vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
+                    if value.contains(&self.workspace_content_filter) {
+                        vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(2.5 + indentation)).into());
+                    }
                 }
                 PathContent::Directory(info) => {
                     let cds = self.collapsed_directories.clone();
@@ -760,17 +776,19 @@ impl IllusionnaApp {
                                 .push(management_button)
                                 .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
                                 .push(Text::new(&info.name))
-                                .spacing(2.5)
+                                .spacing(5)
                                 .align_y(Vertical::Center)
-                        ).width(Length::Fill).padding(3.0).style(small_button),
+                        ).width(Length::Fill).padding(3).style(small_button),
                         operations
                     );
-                    let mut inner = vec![];
-                    if !cds.contains(&value.path) {
-                        self.display_content(&info.contents, indentation + 15.0, &mut inner);
+                    if value.contains(&self.workspace_content_filter) {
+                        vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(2.5 + indentation)).into());
+                        if !cds.contains(&value.path) {
+                            let mut inner = vec![];
+                            self.display_content(&info.contents, indentation + 15.0, &mut inner);
+                            vec.push(Column::new().extend(inner).into());
+                        }
                     }
-                    vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(indentation)).into());
-                    vec.push(Column::new().extend(inner).into());
                 }
             }
         }
@@ -779,10 +797,30 @@ impl IllusionnaApp {
     fn workspace_content(&self) -> Element<'_, Interaction, Theme, Renderer> {
         match &self.workspace_content {
             Some(workspace_content) => {
+                let append = Button::new(
+                    Svg::new(svg::Handle::from_memory(APPEND)).width(Length::Fixed(16f32))
+                        .style(|t, s| advanced_svg(Color::from_rgb8(0, 125, 125), t, s))
+                ).style(small_button).on_press(Interaction::SelectFiles(true, "".to_string()));
+                let workspace = self.selected_workspace.clone().unwrap();
+                let repository = widget::hover(
+                    Button::new(
+                        Row::new()
+                            .push(Svg::new(svg::Handle::from_memory(REPOSITORY)).width(Length::Fixed(16f32)).style(default_svg))
+                            .push(Text::new(format!("{}/{}", workspace.project.source_owner, workspace.project.source_name)))
+                            .push(Text::new(workspace.workspace_id).size(9))
+                            .spacing(5)
+                            .align_y(Vertical::Center)
+                    ).width(Length::Fill).padding(6).style(small_button),
+                    Container::new(append).padding(Padding::new(0.0).right(2.5)).center_y(Length::Fill).align_right(Length::Fill)
+                );
                 let mut root = vec![];
-                self.display_content(workspace_content, 0.0, &mut root);
-                let scroll = Scrollable::new(Column::new().extend(root).padding(10)).width(Length::Fixed(374f32));
-                let mut content: Vec<Element<Interaction, Theme, Renderer>> = vec![scroll.into()];
+                self.display_content(workspace_content, 15.0, &mut root);
+                let scroll = Scrollable::new(
+                    Column::new()
+                        .push(Container::new(repository).width(Length::Fixed(350f32)).padding(2.5))
+                        .extend(root).padding(10)).width(Length::Fixed(374f32)
+                );
+                let mut content: Vec<Element<Interaction, Theme, Renderer>> = vec![];
                 let o_view = self.viewed_file_content.clone();
                 if matches!(o_view, Some(_)) {
                     let name = self.viewed_file_name.clone().unwrap();
@@ -790,21 +828,65 @@ impl IllusionnaApp {
                         content.push(
                             Container::new(
                                 Viewer::new(image::Handle::from_bytes(o_view.unwrap()))
-                                    .width(Length::Fixed(400f32))
-                                    .height(Length::Fixed(400f32))
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
                                     .filter_method(FilterMethod::Nearest)
                                     .scale_step(0.5)
-                            ).center(Length::Fill).into()
+                            ).center(Length::FillPortion(9)).padding(Padding::new(15f32).bottom(5)).into()
                         )
                     }
                     else if name.ends_with("md") {
                         let value = String::from_utf8(o_view.unwrap()).unwrap();
                         let items = markdown::parse(&value, Palette::DARK).map(|x| &*Box::leak(Box::new(x)));
                         let display: Element<Interaction, Theme, Renderer> = widget::markdown(items, markdown::Settings::default()).map(Interaction::OpenLink);
-                        content.push(Container::new(Scrollable::new(display).spacing(10)).width(Length::Fixed(500f32)).padding(25).into())
+                        content.push(
+                            Container::new(Scrollable::new(display).spacing(10))
+                                .width(Length::Fill)
+                                .height(Length::FillPortion(9))
+                                .padding(Padding::new(15f32).bottom(5))
+                                .into()
+                        );
                     }
                 }
-                Row::new().extend(content).into()
+                let bottom_bar = if !self.modification.is_empty() {
+                    Container::new(
+                        Row::new()
+                            .push(TextInput::new("Modification Name", ""))
+                            .push(Button::new("Send Changes").style(small_button))
+                            .push(Button::new("Cancel Changes").style(small_button))
+                            .spacing(10)
+                            .align_y(Vertical::Center)
+                    )
+                } else {
+                    Container::new(
+                        Button::new("Return back to Workspaces List")
+                            .style(small_button)
+                            .on_press(Interaction::DisplayWorkspacesList)
+                    ).align_right(Length::Fill)
+                };
+                content.push(
+                    Container::new(bottom_bar)
+                        .align_bottom(Length::FillPortion(1))
+                        .padding(Padding::new(10f32).top(0f32))
+                        .into()
+                );
+                Row::new()
+                    .push(
+                        Column::new()
+                            .push(
+                                TextInput::new("Filter Elements", &self.workspace_content_filter)
+                                    .width(Length::Fixed(374f32))
+                                    .on_input(Interaction::FilterWorkspaceContent)
+                            )
+                            .push(scroll)
+                            .spacing(3)
+                    )
+                    .push(
+                        Column::new()
+                            .extend(content)
+                            .height(Length::Fill)
+                    )
+                    .into()
             }
             None => Row::new().into()
         }
