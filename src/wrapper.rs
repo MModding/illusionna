@@ -239,12 +239,12 @@ pub async fn push_commit(crab: &Octocrab, owner: &str, project_name: &str, works
     crab.post(route, Some(&serde_json::json!({ "ref": branch_sha, "sha": commit, "force": true }))).await.ok()
 }
 
-pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, fork_owner: &str, source_name: &str, workspace_title: &str, workspace_id: &str, workspace_description: &str) {
+pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, source_name: &str, workspace_title: &str, workspace_full_id: &str, workspace_description: &str) {
     let draft = !crab.repos(source_owner, source_name).get().await.unwrap().private.unwrap();
     crab.pulls(source_owner, source_name)
         .create(
             workspace_title,
-            fork_owner.to_string() + ":" + workspace_id,
+            workspace_full_id,
             get_default_branch(crab, source_owner, source_name).await.unwrap().name
         )
         .body(workspace_description)
@@ -281,4 +281,51 @@ pub async fn get_decoded_blob(crab: &Octocrab, owner: &str, project_name: &str, 
     let blob: BlobObject = crab.get(route, Some(&serde_json::json!({}))).await.unwrap();
     let content = blob.content.as_bytes().to_vec().into_iter().filter(|b| !b" \n\t\r\x0b\x0c".contains(b)).collect::<Vec<u8>>();
     base64::prelude::BASE64_STANDARD.decode(content)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BlobCreationResult {
+    pub url: String,
+    pub sha: String
+}
+
+pub async fn create_blob(crab: &Octocrab, owner: &str, project_name: &str, content: Vec<u8>) -> BlobCreationResult {
+    let route = format!("/repos/{}/{}/git/blobs", owner, project_name);
+    crab.post(route, Some(&serde_json::json!({
+        "content": base64::prelude::BASE64_STANDARD.encode(content),
+        "encoding": "base64"
+    }))).await.unwrap()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TreeCreationPart {
+    pub path: String,
+    pub mode: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub sha: Option<String>
+}
+
+pub async fn create_tree(crab: &Octocrab, owner: &str, project_name: &str, workspace_id: &str, blobs: Vec<TreeCreationPart>) -> Option<(String, TreeObject)> {
+    match crab.repos(owner, project_name).get_ref(&Reference::Branch(workspace_id.to_string())).await.unwrap().object {
+        Object::Commit { sha, .. } => {
+            let page = crab.repos(owner, project_name).list_commits().sha(sha).per_page(1).send().await.unwrap();
+            let commit = page.items.last()?;
+            let new_sha = &commit.sha;
+            let tree_base = &commit.commit.tree.sha;
+            let route = format!("/repos/{}/{}/git/trees", owner, project_name);
+            Some((new_sha.to_string(), crab.post(route, Some(&serde_json::json!({ "base_tree": tree_base.to_string(), "tree": blobs }))).await.unwrap()))
+        }
+        _ => None
+    }
+}
+
+pub async fn create_commit(crab: &Octocrab, owner: &str, project_name: &str, modification_name: &str, parent_sha: &str, tree_sha: &str) -> String {
+    crab.repos(owner, project_name)
+        .create_git_commit_object(modification_name, tree_sha)
+        .parents(vec![parent_sha.to_string()])
+        .send()
+        .await
+        .unwrap()
+        .sha
 }

@@ -3,6 +3,7 @@ use iced::widget::image;
 use octocrab;
 use octocrab::Octocrab;
 use std::collections::{BTreeMap, HashMap};
+use crate::wrapper::TreeCreationPart;
 
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
@@ -56,6 +57,7 @@ pub async fn create_project(crab: Octocrab, author: String, project: String) -> 
 pub struct WorkspaceInfo {
     pub project: ProjectInfo,
     pub workspace_name: String,
+    pub workspace_full_id: String,
     pub workspace_id: String,
     pub workspace_description: String
 }
@@ -65,7 +67,8 @@ pub async fn get_workspaces(crab: Octocrab, project_info: ProjectInfo, all: bool
         .map(move |x| WorkspaceInfo {
             project: project_info.clone(),
             workspace_name: x.title.unwrap_or("Blank Title".to_string()),
-            workspace_id: x.head.label.unwrap(),
+            workspace_full_id: x.head.label.clone().unwrap(),
+            workspace_id: x.head.label.unwrap().split(":").last().unwrap().to_string(),
             workspace_description: x.body.unwrap_or("Blank Description".to_string())
         })
         .collect::<Vec<WorkspaceInfo>>()
@@ -79,10 +82,9 @@ pub async fn create_workspace(crab: Octocrab, info: WorkspaceInfo) {
     wrapper::create_draft_pull_request(
         &crab,
         &info.project.source_owner,
-        &info.project.fork_owner,
         &info.project.source_name,
         &info.workspace_name,
-        &info.workspace_id,
+        &info.workspace_full_id,
         &info.workspace_description
     ).await;
 }
@@ -212,7 +214,7 @@ pub (crate) fn debug_content(structure: &BTreeMap<String, PathInfo>, indentation
 }
 
 pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> BTreeMap<String, PathInfo> {
-    let object = wrapper::get_repository_content(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id.split(":").last().unwrap().to_string()).await;
+    let object = wrapper::get_repository_content(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
     let mut structure: BTreeMap<String, PathInfo> = BTreeMap::new();
     for part in object.tree {
         let mut vec = part.path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
@@ -255,4 +257,28 @@ pub fn append_workspace_content(content: &mut BTreeMap<String, PathInfo>, paths:
 
 pub async fn view_workspace_file(crab: Octocrab, info: WorkspaceInfo, file_sha: String) -> Vec<u8> {
     wrapper::get_decoded_blob(&crab, &info.project.fork_owner, &info.project.fork_name, &file_sha).await.unwrap()
+}
+
+#[derive(Debug, Clone)]
+pub enum Change {
+    AssignContent(Vec<u8>),
+    EraseContent
+}
+
+pub async fn send_contents(crab: Octocrab, info: WorkspaceInfo, modification: HashMap<String, Change>, modification_name: String) {
+    let mut tree_parts = vec![];
+    for (path, change) in modification {
+        match change {
+            Change::AssignContent(content) => {
+                let blob = wrapper::create_blob(&crab, &info.project.fork_owner, &info.project.fork_name, content).await;
+                tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: Some(blob.sha) });
+            }
+            Change::EraseContent => {
+                tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: None });
+            }
+        }
+    }
+    let (parent_sha, tree) = wrapper::create_tree(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id, tree_parts).await.unwrap();
+    let commit_sha = wrapper::create_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &modification_name, &parent_sha, &tree.sha).await;
+    wrapper::push_commit(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id, &parent_sha, &commit_sha).await;
 }

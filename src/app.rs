@@ -1,4 +1,4 @@
-use crate::workspace::{PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
+use crate::workspace::{Change, PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
@@ -47,12 +47,6 @@ pub enum ReferenceValidation {
 }
 
 #[derive(Debug, Clone)]
-pub enum Change {
-    AssignContent(Vec<u8>),
-    EraseContent
-}
-
-#[derive(Debug, Clone)]
 pub struct IllusionnaApp {
     rotator: u16,
     crab: CrabState,
@@ -74,7 +68,8 @@ pub struct IllusionnaApp {
     viewed_file_path: Option<String>,
     viewed_file_name: Option<String>,
     viewed_file_content: Option<Vec<u8>>,
-    modification: HashMap<String, Change>
+    modification: HashMap<String, Change>,
+    modification_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +104,10 @@ pub enum Interaction {
     ViewFile(String, String),
     ProcessViewingContent(Vec<u8>),
     SelectFiles(bool, String),
-    SetFiles(HashMap<String, Vec<u8>>)
+    SetFiles(HashMap<String, Vec<u8>>),
+    ModificationNameInput(String),
+    SendChanges,
+    ResetChanges
 }
 
 pub fn sidebar_button(theme: &Theme, status: button::Status) -> button::Style {
@@ -182,7 +180,8 @@ impl IllusionnaApp {
                 viewed_file_path: None,
                 viewed_file_name: None,
                 viewed_file_content: None,
-                modification: HashMap::new()
+                modification: HashMap::new(),
+                modification_name: "".to_string()
             },
             icon_task
         )
@@ -351,9 +350,12 @@ impl IllusionnaApp {
             Interaction::ProcessNewWorkspace => {
                 if !self.workspace_creation_name_text.is_empty() && !self.workspace_creation_id_text.is_empty() {
                     let crab = self.get_crab().clone();
+                    let selected_project = self.selected_project.clone().unwrap();
+                    let fork_owner = selected_project.fork_owner.clone();
                     let workspace = WorkspaceInfo {
-                        project: self.selected_project.clone().unwrap(),
+                        project: selected_project,
                         workspace_name: self.workspace_creation_name_text.clone(),
+                        workspace_full_id: format!("{}:{}", fork_owner, &self.workspace_creation_id_text),
                         workspace_id: self.workspace_creation_id_text.clone(),
                         workspace_description: format!("{}\n\nPowered by [Illusionna](https://mmodding.com/illusionna).", self.workspace_creation_description_text.clone()),
                     };
@@ -383,10 +385,10 @@ impl IllusionnaApp {
                 self.workspaces = Some(workspaces);
                 Task::done(Interaction::DisplayWorkspacesList)
             }
-            Interaction::OpenWorkspace(workspace_id) => {
+            Interaction::OpenWorkspace(workspace_full_id) => {
                 let crab = self.get_crab().clone();
                 for x in self.workspaces.clone().unwrap() {
-                    if x.workspace_id == workspace_id {
+                    if x.workspace_full_id == workspace_full_id {
                         self.selected_workspace = Some(x.clone());
                         return Task::perform(workspace::get_workspace_content(crab.clone(), x), Interaction::ReceiveWorkspaceContent);
                     }
@@ -444,6 +446,30 @@ impl IllusionnaApp {
                     self.modification.insert(file.0, Change::AssignContent(file.1));
                 }
                 Task::none()
+            }
+            Interaction::ModificationNameInput(input) => {
+                self.modification_name = input;
+                Task::none()
+            }
+            Interaction::SendChanges => {
+                if !self.modification_name.is_empty() {
+                    let crab = self.get_crab().clone();
+                    let workspace = self.selected_workspace.clone().unwrap();
+                    let modification = self.modification.clone(); // I do not like that at all.
+                    self.modification.clear();
+                    let modification_name = self.modification_name.clone();
+                    Task::perform(workspace::send_contents(crab, workspace, modification, modification_name), |_| Interaction::ResetChanges)
+                }
+                else {
+                    Task::none()
+                }
+            }
+            Interaction::ResetChanges => {
+                self.modification.clear();
+                self.modification_name = "".to_string();
+                let crab = self.get_crab();
+                let workspace = self.selected_workspace.clone().unwrap();
+                Task::perform(workspace::get_workspace_content(crab.clone(), workspace), Interaction::ReceiveWorkspaceContent)
             }
         }
     }
@@ -598,10 +624,10 @@ impl IllusionnaApp {
                     for i in 0..iterations {
                         let mut row = vec![];
                         let first_info = workspaces.get(i).unwrap();
-                        row.push(display_workspace(first_info.workspace_name.to_string(), first_info.workspace_id.to_string()));
+                        row.push(display_workspace(first_info.workspace_name.to_string(), first_info.workspace_full_id.to_string()));
                         if i + 1 < workspaces.len() {
                             let second_info = workspaces.get(i + 1).unwrap();
-                            row.push(display_workspace(second_info.workspace_name.to_string(), second_info.workspace_id.to_string()))
+                            row.push(display_workspace(second_info.workspace_name.to_string(), second_info.workspace_full_id.to_string()))
                         }
                         column.push(Row::new().extend(row.into_iter().map(|x| x.into())).spacing(6));
                     }
@@ -609,7 +635,7 @@ impl IllusionnaApp {
                         let last = workspaces.last().unwrap();
                         column.push(
                             Row::new()
-                                .push(display_workspace(last.workspace_name.to_string(), last.workspace_id.to_string()))
+                                .push(display_workspace(last.workspace_name.to_string(), last.workspace_full_id.to_string()))
                         );
                     }
                     Column::new()
@@ -807,7 +833,7 @@ impl IllusionnaApp {
                         Row::new()
                             .push(Svg::new(svg::Handle::from_memory(REPOSITORY)).width(Length::Fixed(16f32)).style(default_svg))
                             .push(Text::new(format!("{}/{}", workspace.project.source_owner, workspace.project.source_name)))
-                            .push(Text::new(workspace.workspace_id).size(9))
+                            .push(Text::new(workspace.workspace_full_id).size(9))
                             .spacing(5)
                             .align_y(Vertical::Center)
                     ).width(Length::Fill).padding(6).style(small_button),
@@ -851,9 +877,9 @@ impl IllusionnaApp {
                 let bottom_bar = if !self.modification.is_empty() {
                     Container::new(
                         Row::new()
-                            .push(TextInput::new("Modification Name", ""))
-                            .push(Button::new("Send Changes").style(small_button))
-                            .push(Button::new("Cancel Changes").style(small_button))
+                            .push(TextInput::new("Modification Name", &self.modification_name).on_input(Interaction::ModificationNameInput))
+                            .push(Button::new("Send Changes").style(small_button).on_press(Interaction::SendChanges))
+                            .push(Button::new("Cancel Changes").style(small_button).on_press(Interaction::ResetChanges))
                             .spacing(10)
                             .align_y(Vertical::Center)
                     )
