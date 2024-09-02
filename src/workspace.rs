@@ -290,7 +290,7 @@ pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> (BTre
         modification.upstream.push(part.path);
     }
     // debug_content(&structure, 0);
-    (structure, modification, wrapper::is_private(&crab, &info.project.source_owner, &info.project.source_name))
+    (structure, modification, wrapper::is_private(&crab, &info.project.source_owner, &info.project.source_name).await)
 }
 
 pub async fn import_files(is_inside_directory: bool, import_location_path: String) -> HashMap<String, Vec<u8>> {

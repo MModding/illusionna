@@ -236,7 +236,7 @@ pub async fn is_private(crab: &Octocrab, source_owner: &str, source_name: &str) 
 }
 
 pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, source_name: &str, workspace_title: &str, workspace_full_id: &str, workspace_description: &str) {
-    let draft = !is_private(crab, source_owner, source_name);
+    let draft = !is_private(crab, source_owner, source_name).await;
     crab.pulls(source_owner, source_name)
         .create(
             workspace_title,
