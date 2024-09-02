@@ -98,7 +98,7 @@ pub enum Interaction {
     DisplayWorkspacesList,
     AddNewWorkspace(WorkspaceInfo),
     OpenWorkspace(String),
-    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>, Modification),
+    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>, Modification, bool),
     FilterWorkspaceContent(String),
     CollapseDirectory(String),
     ExpandDirectory(String),
@@ -109,7 +109,6 @@ pub enum Interaction {
     RefactorFiles(String),
     RefactorInput(String, String),
     PushRefactor(String, String),
-    // ProcessRefactor(String, Vec<u8>),
     EraseFiles(String),
     ModificationNameInput(String),
     SendChanges,
@@ -397,12 +396,12 @@ impl IllusionnaApp {
                 for x in self.workspaces.clone().unwrap() {
                     if x.workspace_full_id == workspace_full_id {
                         self.selected_workspace = Some(x.clone());
-                        return Task::perform(workspace::get_workspace_content(crab.clone(), x), |(x, y)| Interaction::ReceiveWorkspaceContent(x, y));
+                        return Task::perform(workspace::get_workspace_content(crab.clone(), x), |(x, y, z)| Interaction::ReceiveWorkspaceContent(x, y, z));
                     }
                 }
                 Task::none()
             }
-            Interaction::ReceiveWorkspaceContent(content, modification) => {
+            Interaction::ReceiveWorkspaceContent(content, modification, private) => {
                 self.workspace_content = Some(content);
                 self.modification = modification;
                 self.display = Display::WorkspaceContent;
@@ -509,7 +508,7 @@ impl IllusionnaApp {
                 self.modification_name = "".to_string();
                 let crab = self.get_crab();
                 let workspace = self.selected_workspace.clone().unwrap();
-                Task::perform(workspace::get_workspace_content(crab.clone(), workspace), |(x, y)| Interaction::ReceiveWorkspaceContent(x, y))
+                Task::perform(workspace::get_workspace_content(crab.clone(), workspace), |(x, y, z)| Interaction::ReceiveWorkspaceContent(x, y, z))
             }
         }
     }
@@ -938,11 +937,14 @@ impl IllusionnaApp {
                             .align_y(Vertical::Center)
                     )
                 } else {
-                    Container::new(
+                    let mut unmodified: Vec<Element<Interaction, Theme, Renderer>> = vec![];
+                    unmodified.push(
                         Button::new("Return back to Workspaces List")
                             .style(small_button)
                             .on_press(Interaction::DisplayWorkspacesList)
-                    ).align_right(Length::Fill)
+                            .into()
+                    );
+                    Container::new(Row::new().extend(unmodified).spacing(10).align_y(Vertical::Center)).align_right(Length::Fill)
                 };
                 content.push(
                     Container::new(bottom_bar)

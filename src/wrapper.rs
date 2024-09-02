@@ -231,8 +231,12 @@ pub async fn push_commit(crab: &Octocrab, owner: &str, project_name: &str, works
     crab.post(route, Some(&serde_json::json!({ "ref": branch_sha, "sha": commit, "force": true }))).await.ok()
 }
 
+pub async fn is_private(crab: &Octocrab, source_owner: &str, source_name: &str) -> bool {
+    crab.repos(source_owner, source_name).get().await.unwrap().private.unwrap()
+}
+
 pub async fn create_draft_pull_request(crab: &Octocrab, source_owner: &str, source_name: &str, workspace_title: &str, workspace_full_id: &str, workspace_description: &str) {
-    let draft = !crab.repos(source_owner, source_name).get().await.unwrap().private.unwrap();
+    let draft = !is_private(crab, source_owner, source_name);
     crab.pulls(source_owner, source_name)
         .create(
             workspace_title,
