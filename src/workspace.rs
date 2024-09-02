@@ -420,6 +420,9 @@ impl Modification {
         if self.upstream.contains(&path) {
             self.changes.insert(path, Change::EraseContent);
         }
+        else if self.changes.contains_key(&path) {
+            self.changes.remove(&path);
+        }
     }
 
     pub fn reset(&mut self) {
