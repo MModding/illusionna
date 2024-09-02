@@ -154,14 +154,6 @@ pub async fn repository_exists(crab: Octocrab, author: String, project: String) 
     crab.repos(author, project).get().await.is_ok()
 }
 
-pub async fn already_forked(crab: &Octocrab, source_owner: &str, fork_owner: &str, project_name: &str) -> bool {
-    let forks = crab.repos(source_owner, project_name).list_forks().send().await.unwrap().items;
-    for fork in forks {
-        return fork.full_name.unwrap().split("/").collect::<Vec<&str>>()[0] == fork_owner;
-    }
-    false
-}
-
 pub async fn fork_repository(crab: Octocrab, source_owner: &str, project_name: &str) -> Repository {
     crab.repos(source_owner, project_name).create_fork().send().await.unwrap()
 }

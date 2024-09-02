@@ -1,7 +1,8 @@
-use crate::workspace::{Change, PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
+use crate::workspace::{FileContent, Modification, PathContent, PathInfo, ProjectInfo, WorkspaceInfo};
 use crate::wrapper::AccountInfo;
 use crate::{workspace, wrapper};
 use iced::alignment::{Horizontal, Vertical};
+use iced::theme::Palette;
 use iced::widget::image::{FilterMethod, Viewer};
 use iced::widget::{button, image, markdown, scrollable, svg, text, Button, Checkbox, Column, Container, Image, Row, Scrollable, Svg, Text, TextInput};
 use iced::window::icon;
@@ -9,7 +10,6 @@ use iced::{widget, window, Alignment, Background, Border, Color, Degrees, Elemen
 use octocrab::Octocrab;
 use reqwest::Url;
 use std::collections::{BTreeMap, HashMap};
-use iced::theme::Palette;
 
 // Illusionna Icons
 const ICON: &[u8] = include_bytes!("../resources/icon.png").as_slice();
@@ -68,7 +68,8 @@ pub struct IllusionnaApp {
     viewed_file_path: Option<String>,
     viewed_file_name: Option<String>,
     viewed_file_content: Option<Vec<u8>>,
-    modification: HashMap<String, Change>,
+    refactors: HashMap<String, String>,
+    modification: Modification,
     modification_name: String,
 }
 
@@ -97,7 +98,7 @@ pub enum Interaction {
     DisplayWorkspacesList,
     AddNewWorkspace(WorkspaceInfo),
     OpenWorkspace(String),
-    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>),
+    ReceiveWorkspaceContent(BTreeMap<String, PathInfo>, Modification),
     FilterWorkspaceContent(String),
     CollapseDirectory(String),
     ExpandDirectory(String),
@@ -105,6 +106,11 @@ pub enum Interaction {
     ProcessViewingContent(Vec<u8>),
     SelectFiles(bool, String),
     SetFiles(HashMap<String, Vec<u8>>),
+    RefactorFiles(String),
+    RefactorInput(String, String),
+    PushRefactor(String, String),
+    // ProcessRefactor(String, Vec<u8>),
+    EraseFiles(String),
     ModificationNameInput(String),
     SendChanges,
     ResetChanges
@@ -180,7 +186,8 @@ impl IllusionnaApp {
                 viewed_file_path: None,
                 viewed_file_name: None,
                 viewed_file_content: None,
-                modification: HashMap::new(),
+                refactors: HashMap::new(),
+                modification: Modification::new(),
                 modification_name: "".to_string()
             },
             icon_task
@@ -375,7 +382,7 @@ impl IllusionnaApp {
                 self.viewed_file_name = None;
                 self.viewed_file_path = None;
                 self.viewed_file_content = None;
-                self.modification.clear();
+                self.modification.reset();
                 self.display = Display::WorkspaceSelection;
                 Task::none()
             }
@@ -390,14 +397,15 @@ impl IllusionnaApp {
                 for x in self.workspaces.clone().unwrap() {
                     if x.workspace_full_id == workspace_full_id {
                         self.selected_workspace = Some(x.clone());
-                        return Task::perform(workspace::get_workspace_content(crab.clone(), x), Interaction::ReceiveWorkspaceContent);
+                        return Task::perform(workspace::get_workspace_content(crab.clone(), x), |(x, y)| Interaction::ReceiveWorkspaceContent(x, y));
                     }
                 }
                 Task::none()
             }
-            Interaction::ReceiveWorkspaceContent(content) => {
-                self.display = Display::WorkspaceContent;
+            Interaction::ReceiveWorkspaceContent(content, modification) => {
                 self.workspace_content = Some(content);
+                self.modification = modification;
+                self.display = Display::WorkspaceContent;
                 Task::none()
             }
             Interaction::FilterWorkspaceContent(input) => {
@@ -420,16 +428,18 @@ impl IllusionnaApp {
                 self.viewed_file_path = Some(path.clone());
                 self.viewed_file_name = Some(path.split("/").last().unwrap().to_string());
                 self.viewed_file_content = None;
-                if self.modification.contains_key(&path) {
-                    let value = self.modification.get(&path).unwrap();
-                    if matches!(value, Change::AssignContent(_)) {
-                        let Change::AssignContent(bytes) = value else { panic!() };
-                        return Task::done(Interaction::ProcessViewingContent(bytes.clone()));
+                let content = self.modification.view(&path);
+                if content.is_some() {
+                    match content.unwrap() {
+                        FileContent::Bytes(bytes) => {
+                            return Task::done(Interaction::ProcessViewingContent(bytes.clone()));
+                        }
+                        _ => {}
                     }
                 }
                 let crab = self.get_crab().clone();
                 let workspace = self.selected_workspace.clone().unwrap();
-                Task::perform(workspace::view_workspace_file(crab, workspace, sha), Interaction::ProcessViewingContent)
+                Task::perform(workspace::get_file_content(crab, workspace, sha), Interaction::ProcessViewingContent)
             }
             Interaction::ProcessViewingContent(bytes) => {
                 self.viewed_file_content = Some(bytes);
@@ -443,8 +453,37 @@ impl IllusionnaApp {
                 workspace::append_workspace_content(&mut content, files.keys().map(|x| x.to_string()).collect());
                 self.workspace_content = Some(content);
                 for file in files {
-                    self.modification.insert(file.0, Change::AssignContent(file.1));
+                    self.modification.set(file.0, FileContent::Bytes(file.1));
                 }
+                Task::none()
+            }
+            Interaction::RefactorFiles(path) => {
+                self.refactors.insert(path.clone(), path.split("/").last().unwrap().to_string());
+                Task::none()
+            }
+            Interaction::RefactorInput(path, input) => {
+                if !input.starts_with("/") && !input.contains("//") {
+                    self.refactors.insert(path, input);
+                }
+                Task::none()
+            }
+            Interaction::PushRefactor(path, sha) => {
+                let check = self.refactors.get(&path).unwrap();
+                if !check.ends_with("/") && !check.ends_with(".") {
+                    let Some(mut content) = self.workspace_content.clone() else { panic!() };
+                    let refactors = workspace::refactor_workspace_content(&mut content, path.clone(), self.refactors.remove(&path).unwrap(), sha);
+                    self.workspace_content = Some(content);
+                    for (origin, (refactor, origin_sha)) in refactors {
+                        self.modification.refactor(origin, refactor, origin_sha);
+                    }
+                }
+                Task::none()
+            }
+            Interaction::EraseFiles(path) => {
+                let Some(mut content) = self.workspace_content.clone() else { panic!() };
+                workspace::remove_workspace_content(&mut content, path.clone());
+                self.workspace_content = Some(content);
+                self.modification.erase(path);
                 Task::none()
             }
             Interaction::ModificationNameInput(input) => {
@@ -456,7 +495,7 @@ impl IllusionnaApp {
                     let crab = self.get_crab().clone();
                     let workspace = self.selected_workspace.clone().unwrap();
                     let modification = self.modification.clone(); // I do not like that at all.
-                    self.modification.clear();
+                    self.modification.reset();
                     let modification_name = self.modification_name.clone();
                     Task::perform(workspace::send_contents(crab, workspace, modification, modification_name), |_| Interaction::ResetChanges)
                 }
@@ -465,11 +504,12 @@ impl IllusionnaApp {
                 }
             }
             Interaction::ResetChanges => {
-                self.modification.clear();
+                self.refactors.clear();
+                self.modification.reset();
                 self.modification_name = "".to_string();
                 let crab = self.get_crab();
                 let workspace = self.selected_workspace.clone().unwrap();
-                Task::perform(workspace::get_workspace_content(crab.clone(), workspace), Interaction::ReceiveWorkspaceContent)
+                Task::perform(workspace::get_workspace_content(crab.clone(), workspace), |(x, y)| Interaction::ReceiveWorkspaceContent(x, y))
             }
         }
     }
@@ -758,11 +798,11 @@ impl IllusionnaApp {
             let rename = Button::new(
                 Svg::new(svg::Handle::from_memory(RENAME)).width(Length::Fixed(16f32))
                     .style(|t, s| advanced_svg(Color::from_rgb8(0, 255, 0), t, s))
-            ).style(small_button);
+            ).style(small_button).on_press(Interaction::RefactorFiles(value.path.clone()));
             let remove = Button::new(
                 Svg::new(svg::Handle::from_memory(REMOVE)).width(Length::Fixed(16f32))
                     .style(|t, s| advanced_svg(Color::from_rgb8(255, 0, 0), t, s))
-            ).style(small_button);
+            ).style(small_button).on_press(Interaction::EraseFiles(value.path.clone()));
             let operations = Container::new(
                 Row::new()
                     .push(modifier).push(rename).push(remove)
@@ -771,42 +811,56 @@ impl IllusionnaApp {
             ).padding(Padding::new(0.0).right(2.5)).center_y(Length::Fill).align_right(Length::Fill);
             match &value.content {
                 PathContent::File(info) => {
-                    let file = widget::hover(
-                        Button::new(Text::new(&info.name))
-                            .padding(Padding::new(3.0).left(9.0))
-                            .width(Length::Fill)
-                            .style(small_button)
-                            .on_press(Interaction::ViewFile((&value.sha).to_string(), (&value).path.to_string())),
-                        operations
-                    );
+                    let file = if !self.refactors.contains_key(&value.path) {
+                        widget::hover(
+                            Button::new(Text::new(&info.name))
+                                .padding(Padding::new(3.0).left(9.0))
+                                .width(Length::Fill)
+                                .style(small_button)
+                                .on_press(Interaction::ViewFile((&value.sha).to_string(), (&value).path.to_string())),
+                            operations
+                        )
+                    } else {
+                        TextInput::new("Rename File", self.refactors.get(&value.path).unwrap())
+                            .on_input(|input| Interaction::RefactorInput(value.path.to_string(), input))
+                            .on_submit(Interaction::PushRefactor(value.path.to_string(), value.sha.to_string()))
+                            .into()
+                    };
                     if value.contains(&self.workspace_content_filter) {
                         vec.push(Container::new(file).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(2.5 + indentation)).into());
                     }
                 }
                 PathContent::Directory(info) => {
                     let cds = self.collapsed_directories.clone();
-                    let management_button = if cds.contains(&value.path) {
-                        Button::new(Svg::new(svg::Handle::from_memory(EXPAND)).width(Length::Fixed(16f32)).style(default_svg))
-                            .padding(3)
-                            .style(small_button)
-                            .on_press(Interaction::ExpandDirectory(value.path.to_string()))
+                    let directory = if !self.refactors.contains_key(&value.path) {
+                        let management_button = if cds.contains(&value.path) {
+                            Button::new(Svg::new(svg::Handle::from_memory(EXPAND)).width(Length::Fixed(16f32)).style(default_svg))
+                                .padding(3)
+                                .style(small_button)
+                                .on_press(Interaction::ExpandDirectory(value.path.to_string()))
+                        } else {
+                            Button::new(Svg::new(svg::Handle::from_memory(COLLAPSE)).width(Length::Fixed(16f32)).style(default_svg))
+                                .padding(3)
+                                .style(small_button)
+                                .on_press(Interaction::CollapseDirectory(value.path.to_string()))
+                        };
+                        widget::hover(
+                            Button::new(
+                                Row::new()
+                                    .push(management_button)
+                                    .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
+                                    .push(Text::new(&info.name))
+                                    .spacing(5)
+                                    .align_y(Vertical::Center)
+                            ).width(Length::Fill).padding(3).style(small_button),
+                            operations
+                        )
                     } else {
-                        Button::new(Svg::new(svg::Handle::from_memory(COLLAPSE)).width(Length::Fixed(16f32)).style(default_svg))
-                            .padding(3)
-                            .style(small_button)
-                            .on_press(Interaction::CollapseDirectory(value.path.to_string()))
+                        TextInput::new("Rename Directory", self.refactors.get(&value.path).unwrap())
+                            .on_input(|input| Interaction::RefactorInput(value.path.to_string(), input))
+                            .on_submit(Interaction::PushRefactor(value.path.to_string(), value.sha.to_string()))
+                            .into()
                     };
-                    let directory = widget::hover(
-                        Button::new(
-                            Row::new()
-                                .push(management_button)
-                                .push(Svg::new(svg::Handle::from_memory(FOLDER)).width(Length::Fixed(16f32)).style(default_svg))
-                                .push(Text::new(&info.name))
-                                .spacing(5)
-                                .align_y(Vertical::Center)
-                        ).width(Length::Fill).padding(3).style(small_button),
-                        operations
-                    );
                     if value.contains(&self.workspace_content_filter) {
                         vec.push(Container::new(directory).width(Length::Fixed(350f32)).padding(Padding::new(2.5).left(2.5 + indentation)).into());
                         if !cds.contains(&value.path) {
@@ -874,7 +928,7 @@ impl IllusionnaApp {
                         );
                     }
                 }
-                let bottom_bar = if !self.modification.is_empty() {
+                let bottom_bar = if self.modification.present() {
                     Container::new(
                         Row::new()
                             .push(TextInput::new("Modification Name", &self.modification_name).on_input(Interaction::ModificationNameInput))

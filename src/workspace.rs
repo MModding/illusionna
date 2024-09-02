@@ -1,9 +1,12 @@
 use crate::wrapper;
+use crate::wrapper::TreeCreationPart;
 use iced::widget::image;
 use octocrab;
 use octocrab::Octocrab;
 use std::collections::{BTreeMap, HashMap};
-use crate::wrapper::TreeCreationPart;
+use std::path::Path;
+use iced::futures::StreamExt;
+use normalize_path::NormalizePath;
 
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
@@ -142,7 +145,10 @@ impl PathInfo {
 /// if so, it will set its path context information such as path or url.
 /// If it is not the last string entry of the vector; it will instead recursively look up
 /// for its inner content until the primary condition is met to set its tree information.
-fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: String, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize) {
+/// When setting the path information, you can provide content through a treemap representing
+/// provided directory contents that will be added to the current directory information at this
+/// location and if this location is not a directory then it will become one.
+fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: String, provided_content: Option<BTreeMap<String, PathInfo>>, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize) {
     if i == depth - 1 {
         let key = remaining.remove(0);
         let info = PathInfo {
@@ -150,9 +156,25 @@ fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: St
             path: ref_path,
             url: ref_url,
             content: if map.contains_key(&key) {
-                map.remove(&key).unwrap().content
+                let content = map.remove(&key).unwrap().content;
+                if provided_content.is_some() {
+                    if let PathContent::Directory(mut directory) = content {
+                        directory.contents.extend(provided_content.unwrap());
+                        PathContent::Directory(DirectoryInfo { name: ref_name, contents: directory.contents })
+                    } else {
+                        PathContent::Directory(DirectoryInfo { name: ref_name, contents: provided_content.unwrap() })
+                    }
+                }
+                else {
+                    content
+                }
             } else {
-                PathContent::File(FileInfo { name: ref_name })
+                if provided_content.is_some() {
+                    PathContent::Directory(DirectoryInfo { name: ref_name, contents: provided_content.unwrap() })
+                }
+                else {
+                    PathContent::File(FileInfo { name: ref_name })
+                }
             }
         };
         map.insert(key, info);
@@ -170,7 +192,7 @@ fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: St
         } else {
             BTreeMap::new()
         };
-        fill_content(ref_sha, ref_path, ref_url, ref_name, &mut inner, remaining, i + 1, depth);
+        fill_content(ref_sha, ref_path, ref_url, ref_name, provided_content, &mut inner, remaining, i + 1, depth);
         let directory_content = PathContent::Directory(DirectoryInfo { name: key.clone(), contents: inner });
         let info = if previous.is_some() {
             let previous_info = previous.unwrap();
@@ -189,6 +211,49 @@ fn fill_content(ref_sha: String, ref_path: String, ref_url: String, ref_name: St
             }
         };
         map.insert(key, info);
+    }
+}
+
+fn propagate_path(content: PathContent, built_path: Vec<String>) -> (PathContent, HashMap<String, (String, String)>) {
+    match content {
+        PathContent::Directory(directory) => {
+            let mut map = BTreeMap::new();
+            let mut refactors = HashMap::new();
+            for (key, value) in directory.contents.into_iter() {
+                let previous_path = value.path;
+                let previous_sha = value.sha;
+                let child_path = [built_path.clone(), vec![key.clone()]].concat();
+                let is_file = matches!(&value.content, PathContent::File(_));
+                let (propagated, inner_refactors) = propagate_path(value.content, child_path.clone());
+                let refactored = PathInfo { sha: "".to_string(), path: child_path.join("/"), url: "".to_string(), content: propagated };
+                let new_path = refactored.path.clone();
+                map.insert(key, refactored);
+                if is_file {
+                    refactors.insert(previous_path, (new_path, previous_sha));
+                }
+                refactors.extend(inner_refactors);
+            }
+            (PathContent::Directory(DirectoryInfo { contents: map, ..directory }), refactors)
+        }
+        PathContent::File(x) => (PathContent::File(x), HashMap::new())
+    }
+}
+
+fn erase_content(path: String, map: &mut BTreeMap<String, PathInfo>, remaining: &mut Vec<String>, i: usize, depth: usize, cleanup: bool) -> Option<PathInfo> {
+    if i == depth - 1 {
+        map.remove(&remaining.remove(0))
+    }
+    else {
+        let key = remaining.remove(0);
+        let value = map.remove(&key)?;
+        let previous = value.clone();
+        let PathContent::Directory(mut directory) = value.content else { panic!("Should be a directory") };
+        let removed = erase_content(path, &mut directory.contents, remaining, i + 1, depth, cleanup);
+        if !directory.contents.is_empty() || !cleanup {
+            let directory_content = PathContent::Directory(DirectoryInfo { name: key.clone(), contents: directory.contents });
+            map.insert(key, PathInfo { sha: previous.sha, path: previous.path, url: previous.url, content: directory_content });
+        }
+        removed
     }
 }
 
@@ -213,17 +278,19 @@ pub (crate) fn debug_content(structure: &BTreeMap<String, PathInfo>, indentation
     }
 }
 
-pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> BTreeMap<String, PathInfo> {
+pub async fn get_workspace_content(crab: Octocrab, info: WorkspaceInfo) -> (BTreeMap<String, PathInfo>, Modification) {
     let object = wrapper::get_repository_content(&crab, &info.project.fork_owner, &info.project.fork_name, &info.workspace_id).await;
     let mut structure: BTreeMap<String, PathInfo> = BTreeMap::new();
+    let mut modification = Modification::new();
     for part in object.tree {
-        let mut vec = part.path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+        let mut vec = (&part.path).split("/").map(|s| s.to_string()).collect::<Vec<String>>();
         let name = (&vec.last().unwrap()).to_string();
         let len = &vec.len();
-        fill_content(part.sha, part.path, part.url, name, &mut structure, &mut vec, 0usize, len.clone())
+        fill_content(part.sha, part.path.clone(), part.url, name, None, &mut structure, &mut vec, 0usize, len.clone());
+        modification.upstream.push(part.path);
     }
     // debug_content(&structure, 0);
-    structure
+    (structure, modification)
 }
 
 pub async fn import_files(is_inside_directory: bool, import_location_path: String) -> HashMap<String, Vec<u8>> {
@@ -251,27 +318,133 @@ pub fn append_workspace_content(content: &mut BTreeMap<String, PathInfo>, paths:
         let mut vec = path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
         let name = (&vec.last().unwrap()).to_string();
         let len = &vec.len();
-        fill_content("".to_string(), path, "".to_string(), name, content, &mut vec, 0usize, len.clone())
+        fill_content("".to_string(), path, "".to_string(), name, None, content, &mut vec, 0usize, len.clone())
     }
 }
 
-pub async fn view_workspace_file(crab: Octocrab, info: WorkspaceInfo, file_sha: String) -> Vec<u8> {
+/// Extracts path information from an origin location (and so removes it at this location) and if
+/// it is a directory it will also retain its content. Then it will append that path information to
+/// refactored location after propagating the new path through all inner items of the information.
+/// At the end, this function will return a map of all locations that were moved, linked to their
+/// new refactored locations and the sha that was originally inside the information at the origin.
+pub fn refactor_workspace_content(content: &mut BTreeMap<String, PathInfo>, origin_path: String, refactor_input: String, origin_sha: String) -> HashMap<String, (String, String)> {
+    let mut origin = origin_path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+    let normalized = Path::new(&origin.clone()[..origin.len().clone() - 1].join("/"))
+        .join(refactor_input)
+        .normalize()
+        .to_str()
+        .unwrap()
+        .to_string()
+        .replace("\\", "/");
+    let mut refactor = normalized.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+    let origin_len = &origin.len();
+    let to_propagate = erase_content(origin_path.clone(), content, &mut origin, 0usize, origin_len.clone(), false).unwrap();
+    let is_file = matches!(&to_propagate.content, PathContent::File(_));
+    let (propagation, mut trace) = propagate_path(to_propagate.content, refactor.clone());
+    let erased = match propagation {
+        PathContent::Directory(directory) => Some(directory.contents),
+        PathContent::File(_) => None
+    };
+    let refactor_len = &refactor.len();
+    fill_content("".to_string(), normalized.clone(), "".to_string(), refactor.last().unwrap().to_string(), erased, content, &mut refactor.clone(), 0usize, refactor_len.clone());
+    if is_file {
+        trace.insert(origin_path, (normalized, origin_sha));
+    }
+    // debug_content(content, 0usize);
+    trace
+}
+
+pub fn remove_workspace_content(content: &mut BTreeMap<String, PathInfo>, path: String) {
+    let mut vec = path.split("/").map(|s| s.to_string()).collect::<Vec<String>>();
+    let len = &vec.len();
+    erase_content(path, content, &mut vec, 0usize, len.clone(), true);
+}
+
+pub async fn get_file_content(crab: Octocrab, info: WorkspaceInfo, file_sha: String) -> Vec<u8> {
     wrapper::get_decoded_blob(&crab, &info.project.fork_owner, &info.project.fork_name, &file_sha).await.unwrap()
 }
 
 #[derive(Debug, Clone)]
+pub enum FileContent {
+    Bytes(Vec<u8>),
+    Sha(String)
+}
+
+#[derive(Debug, Clone)]
 pub enum Change {
-    AssignContent(Vec<u8>),
+    AssignContent(FileContent),
     EraseContent
 }
 
-pub async fn send_contents(crab: Octocrab, info: WorkspaceInfo, modification: HashMap<String, Change>, modification_name: String) {
+#[derive(Debug, Clone)]
+pub struct Modification {
+    upstream: Vec<String>,
+    changes: HashMap<String, Change>
+}
+
+impl Modification {
+    pub fn new() -> Modification { Modification { upstream: Vec::new(), changes: HashMap::new() } }
+
+    pub fn view(&self, path: &String) -> Option<&FileContent> {
+        if let Change::AssignContent(content) = self.changes.get(path)? {
+            Some(content)
+        } else {
+            None
+        }
+    }
+
+    pub fn set(&mut self, path: String, content: FileContent) {
+        self.changes.insert(path, Change::AssignContent(content));
+    }
+
+    pub fn refactor(&mut self, origin: String, refactor: String, origin_sha: String) {
+        if origin != refactor {
+            let content = if self.changes.contains_key(&origin) {
+                let change = self.changes.remove(&origin).unwrap();
+                if let Change::AssignContent(local_content) = change {
+                    Some(local_content)
+                } else {
+                    None
+                }
+            } else {
+                Some(FileContent::Sha(origin_sha))
+            };
+            if content.is_some() {
+                self.erase(origin);
+                self.set(refactor, content.unwrap());
+            }
+        }
+    }
+
+    pub fn erase(&mut self, path: String) {
+        if self.upstream.contains(&path) {
+            self.changes.insert(path, Change::EraseContent);
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.changes.clear();
+    }
+
+    pub fn present(&self) -> bool {
+        !self.changes.is_empty()
+    }
+}
+
+pub async fn send_contents(crab: Octocrab, info: WorkspaceInfo, modification: Modification, modification_name: String) {
     let mut tree_parts = vec![];
-    for (path, change) in modification {
+    for (path, change) in modification.changes {
         match change {
             Change::AssignContent(content) => {
-                let blob = wrapper::create_blob(&crab, &info.project.fork_owner, &info.project.fork_name, content).await;
-                tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: Some(blob.sha) });
+                match content {
+                    FileContent::Sha(sha) => {
+                        tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: Some(sha) });
+                    }
+                    FileContent::Bytes(bytes) => {
+                        let blob = wrapper::create_blob(&crab, &info.project.fork_owner, &info.project.fork_name, bytes).await;
+                        tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: Some(blob.sha) });
+                    }
+                };
             }
             Change::EraseContent => {
                 tree_parts.push(TreeCreationPart { path, mode: "100644".to_string(), type_: "blob".to_string(), sha: None });
