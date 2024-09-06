@@ -86,7 +86,7 @@ pub async fn oauth_process() -> octocrab::Result<OAuth> {
         .add_header(ACCEPT, "application/json".to_string())
         .build()?;
     let codes = start_authorization(&crab).await?;
-    webbrowser::open(&codes.verification_uri).expect("...");
+    open::that(&codes.verification_uri).expect("...");
     cli_clipboard::set_contents(String::from(&codes.user_code)).expect("...");
     wait_confirm(&crab, codes).await
 }

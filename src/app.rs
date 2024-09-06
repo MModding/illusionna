@@ -298,7 +298,7 @@ impl IllusionnaApp {
                 }
             }
             Interaction::OpenLink(url) => {
-                webbrowser::open(url.as_str()).unwrap();
+                open::that(url.as_str()).unwrap();
                 Task::none()
             }
             Interaction::OpenSelectedProject => {

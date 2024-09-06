@@ -1,6 +1,6 @@
 [package]
 name = "illusionna"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
@@ -12,7 +12,6 @@ octocrab = "0.39.0"
 secrecy = "0.8.0"
 serde_json = "1.0.121"
 tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
-webbrowser = "1.0.1"
 reqwest = "0.12.5"
 serde = { version = "1.0.205", features = ["derive"] }
 keyring = { version = "3.2.0", features = ["windows-native", "apple-native", "linux-native"] }
@@ -20,6 +19,7 @@ whoami = "1.5.1"
 rfd = "0.14.1"
 base64 = "0.22.1"
 normalize-path = "0.2.1"
+open = "5.3.0"
 
 [build-dependencies]
 ico = "0.3.0"
