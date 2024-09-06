@@ -24,7 +24,7 @@ jobs:
             asset_name: ${{ github.event.repository.name }}-linux
     runs-on: ${{ matrix.runner }}
     env:
-      ILLUSIONNA_GITHUB_APP: ILLUSIONNA_GITHUB_APP=${{ secrets.ILLUSIONNA_GITHUB_APP }}
+      ILLUSIONNA_GITHUB_APP: ${{ secrets.ILLUSIONNA_GITHUB_APP }}
     steps:
       - uses: actions/checkout@v4
       - name: Build
