@@ -71,12 +71,12 @@ pub fn set_stored_token(oauth: OAuth) -> octocrab::Result<OAuth> {
 pub async fn embedded_oauth_process() -> octocrab::Result<Octocrab> {
     let oauth: OAuth = match get_stored_token() {
         Some(oauth) => oauth,
-        None => set_stored_token(oauth_process().await?)?
+        None => set_stored_token(oauth_process().await.unwrap()).unwrap()
     };
     let crab = OctocrabBuilder::oauth(OctocrabBuilder::new(), oauth).build().ok();
     match crab {
         Some(x) => Ok(x),
-        None => OctocrabBuilder::oauth(OctocrabBuilder::new(), set_stored_token(oauth_process().await?)?).build()
+        None => OctocrabBuilder::oauth(OctocrabBuilder::new(), set_stored_token(oauth_process().await.unwrap()).unwrap()).build()
     }
 }
 
@@ -85,14 +85,14 @@ pub async fn oauth_process() -> octocrab::Result<OAuth> {
         .base_uri("https://github.com").unwrap()
         .add_header(ACCEPT, "application/json".to_string())
         .build()?;
-    let codes = start_authorization(&crab).await?;
+    let codes = start_authorization(&crab).await.unwrap();
     open::that(&codes.verification_uri).expect("...");
     cli_clipboard::set_contents(String::from(&codes.user_code)).expect("...");
     wait_confirm(&crab, codes).await
 }
 
 pub async fn start_authorization(crab: &Octocrab) -> octocrab::Result<DeviceCodes> {
-    Ok(crab.authenticate_as_device(&SecretString::new(ILLUSIONNA_GITHUB_APP.to_string()), ["repo"]).await?)
+    Ok(crab.authenticate_as_device(&SecretString::new(ILLUSIONNA_GITHUB_APP.to_string()), ["repo"]).await.unwrap())
 }
 
 pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Result<OAuth> {
@@ -100,8 +100,8 @@ pub async fn wait_confirm(crab: &Octocrab, codes: DeviceCodes) -> octocrab::Resu
     let mut clock = tokio::time::interval(interval);
     let oauth = loop {
         clock.tick().await;
-        match codes.poll_once(crab, &SecretString::new(ILLUSIONNA_GITHUB_APP.to_string())).await? {
-            Either::Left(auth) => break auth,
+        match codes.poll_once(crab, &SecretString::new(ILLUSIONNA_GITHUB_APP.to_string())).await.unwrap() {
+            Either::Left(oauth) => break oauth,
             Either::Right(cont) => match cont {
                 Continue::SlowDown => {
                     interval += Duration::from_secs(5);

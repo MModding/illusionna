@@ -916,8 +916,8 @@ impl IllusionnaApp {
                     }
                     else if name.ends_with("md") {
                         let value = String::from_utf8(o_view.unwrap()).unwrap();
-                        let items = markdown::parse(&value, Palette::DARK).map(|x| &*Box::leak(Box::new(x)));
-                        let display: Element<Interaction, Theme, Renderer> = widget::markdown(items, markdown::Settings::default()).map(Interaction::OpenLink);
+                        let items = markdown::parse(&value).map(|x| &*Box::leak(Box::new(x)));
+                        let display: Element<Interaction, Theme, Renderer> = widget::markdown(items, markdown::Settings::default(), markdown::Style::from_palette(Palette::DARK)).map(Interaction::OpenLink);
                         content.push(
                             Container::new(Scrollable::new(display).spacing(10))
                                 .width(Length::Fill)

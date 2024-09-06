@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2021"
 
 [dependencies]
-iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["tokio", "image", "svg", "markdown"] }
+iced = { git = "https://github.com/iced-rs/iced.git", rev = "9426418", features = ["tokio", "image", "svg", "markdown"] }
 cli-clipboard = "0.4.0"
 either = "1.13.0"
 http = "1.1.0"
