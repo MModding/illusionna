@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: >-
+        run: |
           rustup target add ${{ matrix.target }}
           cargo build --release --target ${{ matrix.target }}
       - name: Upload
