@@ -45,19 +45,19 @@ module.exports = {
           {
             // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
             entry: 'src-electron/main.js',
-            config: 'src-config/vite.main.config.mjs',
+            config: 'vite/vite.main.config.mjs',
             target: 'main',
           },
           {
             entry: 'src-electron/preload.js',
-            config: 'src-config/vite.preload.config.mjs',
+            config: 'vite/vite.preload.config.mjs',
             target: 'preload',
           },
         ],
         renderer: [
           {
             name: 'main_window',
-            config: 'src-config/vite.renderer.config.mjs',
+            config: 'vite/vite.renderer.config.mjs',
           },
         ],
       },
