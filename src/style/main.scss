@@ -9,18 +9,7 @@
   $navbar-item-img-max-height: 2.5rem
 );
 
-@forward "bulma/sass/base";
-@forward "bulma/sass/components/card";
-@forward "bulma/sass/components/modal";
-@forward "bulma/sass/elements/button";
-@forward "bulma/sass/elements/icon";
-@forward "bulma/sass/elements/content";
-@forward "bulma/sass/elements/notification";
-@forward "bulma/sass/elements/progress";
-@forward "bulma/sass/elements/tag";
-@forward "bulma/sass/layout/footer";
-
-@forward "bulma/sass/themes";
+@forward "bulma";
 
 @media (prefers-color-scheme: dark) {
   :root {
