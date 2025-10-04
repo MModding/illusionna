@@ -8,7 +8,8 @@ All rights reserved.
 
 ### Are Considered As Assets:
 ```
-- All Files named "icon.png" or "title.png".
+- All Files inside the ./resources/icons Directory.
+- All Files Named "title.png".
 ```
 
 ### License for Code:

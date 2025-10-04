@@ -1,6 +1,7 @@
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: "./resources/icons/app/icon",
     protocols: [
         {
             name: "Illusionna",
@@ -12,7 +13,9 @@ module.exports = {
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      config: {
+          setupIcon: "./resources/icons/installer/icon.ico"
+      },
     },
     {
       name: '@electron-forge/maker-zip',
@@ -21,7 +24,10 @@ module.exports = {
     {
       name: '@electron-forge/maker-deb',
       config: {
-          mimeType: ["x-scheme-handler/illusionna"]
+          mimeType: ["x-scheme-handler/illusionna"],
+          options: {
+              icon: "./resources/icons/app/icon.png"
+          }
       },
     },
     {

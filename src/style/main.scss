@@ -1,0 +1,29 @@
+@use "bootstrap-icons/font/bootstrap-icons.css";
+
+@use "bulma/sass/utilities" with (
+  $family-code: "JetBrains Mono",
+);
+
+@use "bulma/sass/components/navbar" with (
+  $navbar-height: 3rem,
+  $navbar-item-img-max-height: 2.5rem
+);
+
+@forward "bulma/sass/base";
+@forward "bulma/sass/components/card";
+@forward "bulma/sass/components/modal";
+@forward "bulma/sass/elements/button";
+@forward "bulma/sass/elements/icon";
+@forward "bulma/sass/elements/content";
+@forward "bulma/sass/elements/notification";
+@forward "bulma/sass/elements/progress";
+@forward "bulma/sass/elements/tag";
+@forward "bulma/sass/layout/footer";
+
+@forward "bulma/sass/themes";
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bulma-body-background-color: rgb(0, 2, 17);
+  }
+}
