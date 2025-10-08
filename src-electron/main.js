@@ -1,4 +1,4 @@
-import { app, dialog, protocol, BrowserWindow } from 'electron';
+import { app, ipcMain, dialog, protocol, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
@@ -25,7 +25,7 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
-    // frame: false // remove the framing
+    frame: false // remove the framing
   });
 
   // and load the index.html of the app.
@@ -34,6 +34,8 @@ const createWindow = () => {
   } else {
     mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
   }
+
+  // mainWindow.webContents.openDevTools();
 };
 
 app.whenReady().then(() => {
@@ -56,3 +58,26 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+ipcMain.handle("illusionna:window_operation", (event, arg) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    switch (arg) {
+        case "minimize": {
+            mainWindow.minimize();
+            break;
+        }
+        case "maximize": {
+            if (mainWindow.isMaximized()) {
+                mainWindow.restore();
+            }
+            else {
+                mainWindow.maximize();
+            }
+            break;
+        }
+        case "close": {
+            mainWindow.close();
+            break;
+        }
+    }
+})
